@@ -19,12 +19,16 @@ struct Data {
     char apn[64];             // APN, nt operaatori staatilise IP APN
     char expectedIp[16];      // oodatav staatiline IP (ainult kontrolliks)
     char webPass[65];         // veebiliidese + RTSP parool
-    char authSalt[17];        // juhuslik sool sessiooniküpsise jaoks (hex)
+    char authSalt[17];
+    bool rtspAuth;            // kas RTSP nõuab parooli        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 
 void load();                  // loe NVS-ist (puuduvad väärtused = config.h vaikeväärtused)
 Data get();                   // lõimekindel koopia
 bool save(const Data &d);     // valideeri + salvesta
+// Failsafe: kui WiFi klient ja LTE on mõlemad väljas, lülitatakse hotspot sisse
+// (muidu poleks seadmele ühtegi teed). Tagastab true, kui hotspot sunniti sisse.
+bool applyFailsafe(Data &d);
 void resetDefaults();         // tagasi config.h väärtustele
 
 }  // namespace Settings

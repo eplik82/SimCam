@@ -57,4 +57,9 @@ Status status();              // lõimekindel koopia hetkeolekust
 bool connected();
 const char *stateName(State s);
 
+// Muuda SIM-kaardi PIN-i (AT+CPWD="SC"). Blokeerib kuni ~15 s.
+// Vajab töötavat modemit (olek CONNECTED + CMUX). Õnnestumisel salvestatakse
+// uus PIN ka seadetesse. `err` saab tekstilise veateate.
+bool changeSimPin(const char *oldPin, const char *newPin, String &err);
+
 }  // namespace LTE

@@ -30,7 +30,11 @@ release'ist (FOTA)**.
 * **Juurdepääs parooliga** (veeb + RTSP), sessiooniküpsis kehtib 30 päeva.
 * **WiFi klient + hotspot korraga.** Hotspotiga ühendudes avaneb telefonis
   kaamera leht ise (captive portal, testitud Samsung S24+).
-* **LTE** (PPPoS, CMUX): PIN, APN, levi (CSQ/RSRP/RSRQ), automaatne taasühendus.
+* **LTE** (PPPoS, CMUX): PIN, APN, levi (CSQ/RSRP/RSRQ), automaatne taasühendus,
+  SIM-kaardi PIN-koodi muutmine veebiliidesest (`AT+CPWD`).
+* **Failsafe:** kui WiFi klient ja LTE on seadetes mõlemad väljas, jääb hotspot alati
+  sisse; kui seadmel pole 2 minutit ühtegi võrguühendust, lülitub hotspot ajutiselt
+  ise sisse (ja pärast ühenduse taastumist välja).
 * **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel, eelmine versioon
   taastatakse automaatselt, kui uus ei käivitu.
 * Kõik seaded (WiFi, hotspot, LTE, parool, pööre) salvestatakse seadme NVS-i –
@@ -125,8 +129,8 @@ ffplay -rtsp_transport tcp -fflags nobuffer -flags low_delay rtsp://admin:<paroo
 Mobiilivõrgus/NAT taga: Tööriistad → Eelistused → Sisend/Koodekid → Demuxerid →
 RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
 
-> Kui VLC näitab väikest (176x144) tühja pilti, ei saanud ta RTSP-ga ühendust
-> (nt kõik 4 kliendikohta hõivatud) ja kasutas teist moodulit.
+> Kui VLC ütleb „authentication failed" või näitab väikest (176x144) tühja pilti,
+> puudub URL-ist parool (`rtsp://admin:<parool>@…`) või on kõik 4 kliendikohta hõivatud.
 
 ## WiFi, hotspot ja captive portal
 
@@ -164,6 +168,8 @@ Modem on ESP32-ga ühendatud **UART-i** kaudu, seega piirab läbilaskevõimet UA
 * Veebiliides: sisselogimise leht → küpsis (SHA-256 seadmekohasest soolast + paroolist),
   kehtib ka pärast taaskäivitust; parooli muutmine logib teised välja.
 * RTSP ja API skriptid: HTTP Basic (`curl -u admin:<parool> http://<IP>/api/status`).
+  RTSP paroolinõude saab kohtvõrgu jaoks välja lülitada (⚙ → RTSP ja parool) – siis
+  töötab ka `rtsp://<IP>:554/live`.
 * Vale parooli korral 0,8 s viivitus.
 * SIM PIN on ainult kirjutatav (veebiliides seda ei näita). Kui SIM lükkab PIN-i
   tagasi, seda PIN-i enam ei proovita (kaitse PUK-lukustuse eest).

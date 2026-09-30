@@ -212,7 +212,7 @@ static esp_err_t h_status(httpd_req_t *req) {
     char buf[1900];
     int n = snprintf(buf, sizeof(buf),
         "{\"wifi\":{\"sta_en\":%s,\"sta_ok\":%s,\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\","
-        "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d},"
+        "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d,\"ap_temp\":%s},"
         "\"lte\":{\"enabled\":%s,\"state\":\"%s\",\"connected\":%s,\"ip\":\"%s\",\"expected_ip\":\"%s\","
         "\"ip_ok\":%s,\"operator\":\"%s\",\"tech\":\"%s\",\"csq\":%d,\"rssi\":%d,"
         "\"rsrp\":%d,\"rsrq\":%.1f,\"reg\":%d,\"model\":\"%s\",\"imei\":\"%s\","
@@ -221,9 +221,9 @@ static esp_err_t h_status(httpd_req_t *req) {
         "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d,\"rot_ms\":%.0f},"
         "\"sys\":{\"uptime\":%llu,\"heap_free\":%u,\"heap_total\":%u,\"heap_min\":%u,"
         "\"psram_free\":%u,\"psram_total\":%u,\"temp\":%.1f,\"rtsp_clients\":%d,"
-        "\"http_streams\":%d,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\"}}",
+        "\"http_streams\":%d,\"rtsp_auth\":%s,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\"}}",
         w.staEnabled ? "true" : "false", w.staConnected ? "true" : "false", staSsid, w.staIp,
-        w.staRssi, w.channel, w.apEnabled ? "true" : "false", apSsid, w.apIp, w.apClients,
+        w.staRssi, w.channel, w.apEnabled ? "true" : "false", apSsid, w.apIp, w.apClients, w.apTemp ? "true" : "false",
         LTE::enabled() ? "true" : "false",
         LTE::enabled() ? LTE::stateName(m.state) : "DISABLED", m.connected ? "true" : "false", m.ip, cfgd.expectedIp,
         m.ipMatchesExpected ? "true" : "false", op, m.tech, m.csq, m.rssiDbm,
@@ -236,7 +236,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         (unsigned long long)(esp_timer_get_time() / 1000000ULL),
         ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(),
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
-        RtspServer::clients(), (int)s_streams, ip, RTSP_PORT, RTSP_PATH,
+        RtspServer::clients(), (int)s_streams, (Auth::enabled() && cfgd.rtspAuth) ? "true" : "false", ip, RTSP_PORT, RTSP_PATH,
         SIMCAM_VERSION);
 
     httpd_resp_set_type(req, "application/json");
@@ -302,6 +302,36 @@ static bool formField(const char *body, const char *key, char *out, size_t len) 
     return true;
 }
 
+// --- SIM-kaardi PIN-i muutmine (AT+CPWD) --------------------------------------
+static esp_err_t h_simpin(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    char body[128], o[16] = "", n[16] = "";
+    httpd_resp_set_type(req, "application/json");
+    auto bad = [&](const char *e) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        char b[200];
+        snprintf(b, sizeof(b), "{\"ok\":false,\"error\":\"%s\"}", e);
+        return httpd_resp_sendstr(req, b);
+    };
+    if (!readBody(req, body, sizeof(body)) || !formField(body, "old", o, sizeof(o)) ||
+        !formField(body, "new", n, sizeof(n)))
+        return bad("Vigane päring");
+    auto digits = [](const char *p) {
+        size_t l = strlen(p);
+        if (l < 4 || l > 8) return false;
+        for (; *p; p++) if (*p < '0' || *p > '9') return false;
+        return true;
+    };
+    if (!digits(o) || !digits(n)) return bad("PIN peab olema 4–8 numbrit");
+    String err;
+    if (!LTE::changeSimPin(o, n, err)) {
+        char e[160];
+        jsonEsc(e, sizeof(e), err.c_str());
+        return bad(e);
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
 // --- FOTA ----------------------------------------------------------------------
 static esp_err_t sendJson(httpd_req_t *req, const String &j) {
     httpd_resp_set_type(req, "application/json");
@@ -346,11 +376,11 @@ static esp_err_t h_config_get(httpd_req_t *req) {
     int n = snprintf(buf, sizeof(buf),
         "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
-        "\"apn\":\"%s\",\"exp_ip\":\"%s\",\"has_pin\":%s,\"default_pass\":%s}",
+        "\"apn\":\"%s\",\"exp_ip\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s}",
         d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
         d.lteEnabled ? "true" : "false", apn, eip, d.simPin[0] ? "true" : "false",
-        strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false");
+        strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, buf, n);
@@ -384,6 +414,8 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "exp_ip", v, sizeof(v))) strlcpy(d.expectedIp, v, sizeof(d.expectedIp));
     if (formField(body, "sim_pin", v, sizeof(v)) && v[0]) strlcpy(d.simPin, v, sizeof(d.simPin));
     if (formField(body, "sim_pin_clear", v, sizeof(v)) && v[0] == '1') d.simPin[0] = 0;
+    if (formField(body, "rtsp_auth", v, sizeof(v))) d.rtspAuth = v[0] == '1';
+    const bool apForced = Settings::applyFailsafe(d);
     const bool modemChanged = strcmp(d.apn, Settings::get().apn) || strcmp(d.simPin, Settings::get().simPin);
 
     httpd_resp_set_type(req, "application/json");
@@ -393,7 +425,10 @@ static esp_err_t h_config_post(httpd_req_t *req) {
             "{\"ok\":false,\"error\":\"Vigased seaded: SSID ei tohi olla tühi, hotspoti parool min 8 märki, PIN ainult numbrid\"}");
     }
     bool reboot = d.lteEnabled != oldLte || (d.lteEnabled && modemChanged);   // rakendub taaskäivitusel
-    httpd_resp_sendstr(req, reboot ? "{\"ok\":true,\"reboot\":true}" : "{\"ok\":true,\"reboot\":false}");
+    char resp[80];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"reboot\":%s,\"ap_forced\":%s}",
+             reboot ? "true" : "false", apForced ? "true" : "false");
+    httpd_resp_sendstr(req, resp);
     LOGI(TAG, "Seaded muudetud veebiliidesest%s", reboot ? " (LTE muutus → vajab taaskäivitust)" : "");
     xTaskCreate(wifiRestartTask, "wifi_rst", 4096, nullptr, 2, nullptr);
     return ESP_OK;
@@ -501,7 +536,7 @@ bool begin() {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port      = HTTP_PORT;
     cfg.ctrl_port        = 32768;
-    cfg.max_uri_handlers = 28;
+    cfg.max_uri_handlers = 32;
     cfg.max_open_sockets = 7;
     cfg.lru_purge_enable = true;          // vabasta vanimad, kui soketid otsas
     cfg.stack_size       = 8192;
@@ -532,6 +567,7 @@ bool begin() {
         {"/api/cam",    HTTP_GET,  h_cam,     nullptr},
         {"/favicon.ico", HTTP_GET, h_favicon, nullptr},
         {"/api/ota",    HTTP_GET,  h_ota,     nullptr},
+        {"/api/simpin", HTTP_POST, h_simpin,  nullptr},
         {"/api/ota/check",  HTTP_POST, h_ota_check,  nullptr},
         {"/api/ota/update", HTTP_POST, h_ota_update, nullptr},
     };

@@ -28,6 +28,17 @@ static void defaults(Data &d) {
     d.expectedIp[0] = 0;
     strlcpy(d.webPass, WEB_PASS_DEFAULT, sizeof(d.webPass));
     d.authSalt[0] = 0;
+    d.rtspAuth = true;
+}
+
+bool applyFailsafe(Data &d) {
+    if (!d.staEnabled && !d.lteEnabled && !d.apEnabled) {
+        d.apEnabled = true;
+        if (strlen(d.apPass) < 8) strlcpy(d.apPass, WIFI_AP_PASS_DEFAULT, sizeof(d.apPass));
+        if (!d.apSsid[0]) strlcpy(d.apSsid, WIFI_AP_SSID_DEFAULT, sizeof(d.apSsid));
+        return true;
+    }
+    return false;
 }
 
 void load() {
@@ -48,6 +59,7 @@ void load() {
         if (p.isKey("apn")) p.getString("apn", d.apn, sizeof(d.apn));
         if (p.isKey("exp_ip")) p.getString("exp_ip", d.expectedIp, sizeof(d.expectedIp));
         if (p.isKey("web_pass")) p.getString("web_pass", d.webPass, sizeof(d.webPass));
+        d.rtspAuth = p.getBool("rtsp_auth", d.rtspAuth);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
     }
@@ -57,6 +69,7 @@ void load() {
         Preferences w;
         if (w.begin(NS, false)) { w.putString("salt", d.authSalt); w.end(); }
     }
+    if (applyFailsafe(d)) LOGW(TAG, "Failsafe: WiFi klient ja LTE väljas → hotspot sisse");
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_d = d;
     xSemaphoreGive(s_mtx);
@@ -73,7 +86,9 @@ Data get() {
     return c;
 }
 
-bool save(const Data &d) {
+bool save(const Data &din) {
+    Data d = din;
+    applyFailsafe(d);
     // WPA2 parool peab olema 8–63 märki (või tühi = avatud võrk kliendi puhul)
     if (d.apEnabled && (strlen(d.apSsid) == 0 || strlen(d.apPass) < 8)) return false;
     if (d.staEnabled && strlen(d.staSsid) == 0) return false;
@@ -95,6 +110,7 @@ bool save(const Data &d) {
     p.putString("exp_ip", d.expectedIp);
     p.putString("web_pass", d.webPass);
     p.putString("salt", d.authSalt);
+    p.putBool("rtsp_auth", d.rtspAuth);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_d = d;

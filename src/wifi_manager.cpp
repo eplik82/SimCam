@@ -5,6 +5,7 @@
 #include "settings.h"
 #include "config.h"
 #include "log.h"
+#include "modem_lte.h"
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -129,6 +130,29 @@ static void startMdns() {
     }
 }
 
+static volatile bool s_apTemp = false;       // failsafe'i poolt ajutiselt sisse lülitatud
+
+static void startAp(const Settings::Data &d) {
+    if (WiFi.softAP(d.apSsid, d.apPass, WIFI_AP_CHANNEL, 0, 4)) {
+        // DHCP peab klientidele DNS-iks andma seadme enda (WIFI_AP_IP).
+        // Arduino pakub DNS-i ainult siis, kui see on softAPConfig-is antud –
+        // muidu telefon ei jõua captive DNS-ini ja portaal ei avane.
+        const IPAddress apIp(WIFI_AP_IP_BYTES);
+        IPAddress lease = apIp;
+        lease[3] = apIp[3] + 1;                   // DHCP jagab alates .2
+        if (!WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0), lease, apIp))
+            LOGE(TAG, "softAPConfig (DHCP DNS) ebaõnnestus");
+        LOGI(TAG, "Hotspot '%s' sees: http://%s/", d.apSsid, WiFi.softAPIP().toString().c_str());
+    } else {
+        LOGE(TAG, "Hotspoti käivitamine ebaõnnestus");
+    }
+    // Captive portal: iga domeeninimi → WIFI_AP_IP. Telefon tuvastab
+    // "sisselogimist vajava võrgu" ja avab kaamera veebilehe.
+    if (!s_dnsTask) xTaskCreatePinnedToCore(dnsTask, "dns", 4096, nullptr, 3, &s_dnsTask, 0);
+    s_dnsLogged = 0;
+    s_dnsOn = true;
+}
+
 static void apply() {
     Settings::Data d = Settings::get();
     WiFi.persistent(false);                       // seaded on meie NVS-is
@@ -145,33 +169,13 @@ static void apply() {
     }
     s_staUp = false;
     s_dnsOn = false;
+    s_apTemp = false;
     WiFi.mode(mode);
     if (mode == WIFI_OFF) { LOGI(TAG, "WiFi väljas"); return; }
 
     WiFi.setSleep(false);                         // madalam latentsus voogedastusel
 
-    if (d.apEnabled) {
-        if (WiFi.softAP(d.apSsid, d.apPass, WIFI_AP_CHANNEL, 0, 4)) {
-            // DHCP peab klientidele DNS-iks andma seadme enda (WIFI_AP_IP).
-            // Arduino pakub DNS-i ainult siis, kui see on softAPConfig-is antud –
-            // muidu telefon ei jõua captive DNS-ini ja portaal ei avane.
-            const IPAddress apIp(WIFI_AP_IP_BYTES);
-            IPAddress lease = apIp;
-            lease[3] = apIp[3] + 1;                   // DHCP jagab alates .2
-            if (!WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0), lease, apIp))
-                LOGE(TAG, "softAPConfig (DHCP DNS) ebaõnnestus");
-            LOGI(TAG, "Hotspot '%s' sees: http://%s/  (parool: %s)", d.apSsid,
-                 WiFi.softAPIP().toString().c_str(), d.apPass);
-        } else {
-            LOGE(TAG, "Hotspoti käivitamine ebaõnnestus");
-        }
-        // Captive portal: iga domeeninimi → WIFI_AP_IP. Telefon tuvastab
-        // "sisselogimist vajava võrgu" ja avab kaamera veebilehe.
-        if (!s_dnsTask) xTaskCreatePinnedToCore(dnsTask, "dns", 4096, nullptr, 3, &s_dnsTask, 0);
-        s_dnsLogged = 0;
-        s_dnsOn = true;
-        LOGI(TAG, "Captive portal DNS sees");
-    }
+    if (d.apEnabled) startAp(d);
     if (d.staEnabled) {
         WiFi.setAutoReconnect(true);
         WiFi.begin(d.staSsid, d.staPass);
@@ -194,7 +198,8 @@ Status status() {
     Status s;
     Settings::Data d = Settings::get();
     s.staEnabled = d.staEnabled;
-    s.apEnabled = d.apEnabled;
+    s.apEnabled = d.apEnabled || s_apTemp;
+    s.apTemp = s_apTemp;
     strlcpy(s.staSsid, d.staSsid, sizeof(s.staSsid));
     strlcpy(s.apSsid, d.apSsid, sizeof(s.apSsid));
     s.staConnected = s_staUp && WiFi.isConnected();
@@ -211,7 +216,45 @@ Status status() {
     return s;
 }
 
-void loop() {}
+// -----------------------------------------------------------------------------
+//  Käitusaegne failsafe: kui hotspot on seadetes väljas ja seadmel pole
+//  WIFI_FAILSAFE_S sekundit ühtegi võrguühendust (WiFi klient ega LTE), lülitub
+//  hotspot ajutiselt sisse. Kui ühendus on taas WIFI_FAILSAFE_S sekundit
+//  stabiilne ja hotspotis pole kliente, lülitub ajutine hotspot välja.
+// -----------------------------------------------------------------------------
+#define WIFI_FAILSAFE_S 120
+
+void loop() {
+    static uint32_t lastTick = 0, offlineSince = 0, onlineSince = 0;
+    uint32_t now = millis();
+    if (now - lastTick < 1000) return;
+    lastTick = now;
+
+    Settings::Data d = Settings::get();
+    if (d.apEnabled) { offlineSince = onlineSince = 0; return; }   // hotspot on niigi sees
+
+    bool online = (s_staUp && WiFi.isConnected()) || LTE::connected();
+    if (online) { offlineSince = 0; if (!onlineSince) onlineSince = now; }
+    else        { onlineSince = 0;  if (!offlineSince) offlineSince = now; }
+
+    if (!s_apTemp && offlineSince && now - offlineSince > WIFI_FAILSAFE_S * 1000UL) {
+        LOGW(TAG, "Failsafe: %d s ilma võrguühenduseta → hotspot '%s' ajutiselt sisse",
+             WIFI_FAILSAFE_S, d.apSsid);
+        WiFi.mode(d.staEnabled ? WIFI_AP_STA : WIFI_AP);
+        if (d.staEnabled) { WiFi.setAutoReconnect(true); WiFi.begin(d.staSsid, d.staPass); }
+        startAp(d);
+        s_apTemp = true;
+    }
+    if (s_apTemp && onlineSince && now - onlineSince > WIFI_FAILSAFE_S * 1000UL &&
+        WiFi.softAPgetStationNum() == 0) {
+        LOGI(TAG, "Failsafe: ühendus taastunud → ajutine hotspot välja");
+        s_dnsOn = false;
+        WiFi.softAPdisconnect(true);
+        s_apTemp = false;
+    }
+}
+
+bool apTemporary() { return s_apTemp; }
 
 bool isApAddress(uint32_t ip) {
     wifi_mode_t m = WiFi.getMode();

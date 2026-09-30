@@ -425,6 +425,59 @@ static void pollModem() {
     if (PPP.cmd("AT+CEREG?", r, 1000)) parseCereg(r);
 }
 
+// --- SIM PIN-i muutmise päring (täidetakse LTE taskis, et AT kanal oleks jagamata)
+static SemaphoreHandle_t s_pinDone = nullptr;
+static volatile bool     s_pinReq = false;
+static char              s_pinOld[9], s_pinNew[9];
+static bool              s_pinOk = false;
+static String            s_pinErr;
+
+static void servicePinChange() {
+    if (!s_pinReq) return;
+    s_pinReq = false;
+    s_pinOk = false;
+    if (PPP.mode() != ESP_MODEM_MODE_CMUX) {
+        s_pinErr = "Modem on andmerežiimis (CMUX puudub) – PIN-i ei saa praegu muuta";
+    } else {
+        char cmd[48];
+        snprintf(cmd, sizeof(cmd), "AT+CPWD=\"SC\",\"%s\",\"%s\"", s_pinOld, s_pinNew);
+        String r;
+        s_pinOk = PPP.cmd(cmd, r, 10000);
+        if (s_pinOk) {
+            Settings::Data d = Settings::get();
+            strlcpy(d.simPin, s_pinNew, sizeof(d.simPin));
+            Settings::save(d);
+            markPin(s_pinNew, true);
+            LOGI(TAG, "SIM-kaardi PIN muudetud");
+        } else {
+            s_pinErr = r.indexOf("incorrect") >= 0 || r.indexOf("16") >= 0
+                           ? "Vana PIN on vale (NB! 3 valet katset lukustab SIM-i PUK-iga)"
+                           : "Modem lükkas PIN-i muutmise tagasi: " + r;
+            LOGW(TAG, "SIM PIN-i muutmine ebaõnnestus: %s", r.c_str());
+        }
+    }
+    memset(s_pinOld, 0, sizeof(s_pinOld));
+    memset(s_pinNew, 0, sizeof(s_pinNew));
+    xSemaphoreGive(s_pinDone);
+}
+
+bool changeSimPin(const char *oldPin, const char *newPin, String &err) {
+    if (!s_mtx) { err = "LTE modem on seadetes välja lülitatud"; return false; }
+    if (!status().connected) { err = "Modem peab olema võrku ühendatud (olek CONNECTED)"; return false; }
+    if (!s_pinDone) s_pinDone = xSemaphoreCreateBinary();
+    xSemaphoreTake(s_pinDone, 0);
+    strlcpy(s_pinOld, oldPin, sizeof(s_pinOld));
+    strlcpy(s_pinNew, newPin, sizeof(s_pinNew));
+    s_pinReq = true;
+    if (xSemaphoreTake(s_pinDone, pdMS_TO_TICKS(15000)) != pdTRUE) {
+        s_pinReq = false;
+        err = "Modem ei vastanud";
+        return false;
+    }
+    if (!s_pinOk) err = s_pinErr;
+    return s_pinOk;
+}
+
 static bool registered() {
     ST_LOCK();
     int st = s_st.regStat;
@@ -543,6 +596,7 @@ static void lteTask(void *) {
                     if (!registered()) { if (!regLostAt) regLostAt = now; }
                     else regLostAt = 0;
                 }
+                servicePinChange();
                 if (!s_hasIp && now - s_ipLostAt > LTE_LINK_LOST_GRACE_MS) {
                     setError("IP kadunud – taastan ühenduse");
                     break;

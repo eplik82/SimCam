@@ -23,6 +23,7 @@ struct Status {
     char    apSsid[33] = "";
     char    apIp[16] = "-";
     int     apClients = 0;
+    bool    apTemp = false;      // failsafe lülitas hotspoti ajutiselt sisse
 };
 
 void begin();          // käivita vastavalt Settings-ile
@@ -33,7 +34,8 @@ Status status();
 String scanJson();
 
 // Captive portal: DNS vastab hotspoti klientidele alati seadme IP-ga
-void loop();           // kutsu perioodiliselt (DNS päringute töötlus)
+void loop();           // kutsu perioodiliselt (failsafe: hotspot, kui võrku pole)
+bool apTemporary();
 bool isApAddress(uint32_t ip);  // kas IPv4 (võrgubaidijärjestuses) on hotspoti liidese IP
 
 }  // namespace WifiMgr

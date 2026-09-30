@@ -11,6 +11,7 @@
 #include "camera_handler.h"
 #include "config.h"
 #include "auth.h"
+#include "settings.h"
 #include "log.h"
 
 #include <Arduino.h>
@@ -294,7 +295,7 @@ static bool handleRequest(Session &s, char *req) {
     LOGI(TAG, "%s %s", method, url);
 
     // --- Autentimine (kui AUTH_PASS on määratud)
-    if (Auth::enabled() && strcmp(method, "OPTIONS") != 0) {
+    if (Auth::enabled() && Settings::get().rtspAuth && strcmp(method, "OPTIONS") != 0) {
         char auth[128] = "";
         header(req, "Authorization", auth, sizeof(auth));
         if (!Auth::check(auth)) {
