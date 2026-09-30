@@ -341,8 +341,10 @@ bool begin() {
         applySensorFlip();
         if (r) LOGI(TAG, "Pildi pööre %d°", r);
     }
-    // Core 1 – Arduino loop jääb vabaks; PPP/lwIP töötab core 0 peal.
-    xTaskCreatePinnedToCore(captureTask, "cam_capture", 12288, nullptr, 5, nullptr, 1);
+    // Core 1 – PPP/lwIP töötab core 0 peal. Prioriteet 2 < voo saatjad (3):
+    // 90°/270° ümberkodeerimine (~260 ms/kaader) hõivab muidu kogu tuuma ja
+    // MJPEG/RTSP saatjad jäävad protsessoriajast ilma (vaataja sai ~0,5 fps).
+    xTaskCreatePinnedToCore(captureTask, "cam_capture", 12288, nullptr, 2, nullptr, 1);
     return true;
 }
 
