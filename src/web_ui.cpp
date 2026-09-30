@@ -1,0 +1,546 @@
+// =============================================================================
+//  Veebiliides – teostus
+// =============================================================================
+#include "web_ui.h"
+#include "web_page.h"
+#include "camera_handler.h"
+#include "modem_lte.h"
+#include "rtsp_server.h"
+#include "config.h"
+#include "version.h"
+#include "auth.h"
+#include "settings.h"
+#include "wifi_manager.h"
+#include "ota.h"
+#include "log.h"
+
+#include <Arduino.h>
+#include <atomic>
+#include "esp_http_server.h"
+#include "lwip/sockets.h"
+
+static const char *TAG = "WEB";
+
+
+namespace WebUI {
+
+static httpd_handle_t   s_server = nullptr;
+static std::atomic<int> s_streams{0};
+
+#define PART_BOUNDARY "simcamframe"
+static const char STREAM_CT[]   = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
+static const char STREAM_SEP[]  = "\r\n--" PART_BOUNDARY "\r\n";
+static const char STREAM_PART[] = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+// --- Autentimine ------------------------------------------------------------
+// --- Captive portal ------------------------------------------------------------
+// Kas päring tuli hotspoti liidese kaudu? (kohalik soketi aadress = hotspoti IP)
+static bool viaHotspot(httpd_req_t *req) {
+    int fd = httpd_req_to_sockfd(req);
+    struct sockaddr_storage ss = {};
+    socklen_t l = sizeof(ss);
+    if (getsockname(fd, (struct sockaddr *)&ss, &l) != 0) return false;
+    uint32_t ip = 0;
+    if (ss.ss_family == AF_INET) ip = ((struct sockaddr_in *)&ss)->sin_addr.s_addr;
+    else if (ss.ss_family == AF_INET6) {
+        // IPv4-mapped IPv6 (::ffff:a.b.c.d)
+        struct sockaddr_in6 *a6 = (struct sockaddr_in6 *)&ss;
+        memcpy(&ip, &a6->sin6_addr.un.u32_addr[3], 4);
+    }
+    return WifiMgr::isApAddress(ip);
+}
+
+// Kas päringul on kehtiv sessiooniküpsis või HTTP Basic päis?
+static bool hasAccess(httpd_req_t *req) {
+    if (!Auth::enabled()) return true;
+    char hdr[160] = "";
+    if (httpd_req_get_hdr_value_str(req, "Cookie", hdr, sizeof(hdr)) == ESP_OK && Auth::checkCookie(hdr))
+        return true;
+    hdr[0] = 0;
+    if (httpd_req_get_hdr_value_str(req, "Authorization", hdr, sizeof(hdr)) == ESP_OK && Auth::check(hdr))
+        return true;
+    return false;
+}
+
+// API/voog: 401 JSON (ilma WWW-Authenticate päiseta → brauser ei näita hüpikakent;
+// leht suunab ise /login-ile). Skriptid võivad kasutada HTTP Basic päist.
+static bool authorized(httpd_req_t *req) {
+    if (hasAccess(req)) return true;
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"login\"}");
+    return false;
+}
+
+// HTML lehed: suuna sisselogimisele
+static bool authorizedPage(httpd_req_t *req) {
+    if (hasAccess(req)) return true;
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/login");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, "", 0);
+    return false;
+}
+
+static void logHotspot(httpd_req_t *req) {
+    if (!viaHotspot(req)) return;
+    char host[64] = "";
+    httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
+    LOGI(TAG, "Hotspot HTTP: %s%s", host, req->uri);
+}
+
+static esp_err_t sendPage(httpd_req_t *req, const char *html) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, html, strlen_P(html));
+}
+
+// --- JSON abi ----------------------------------------------------------------
+static void jsonEsc(char *dst, size_t n, const char *src) {
+    size_t j = 0;
+    for (; *src && j + 2 < n; src++) {
+        char c = *src;
+        if (c == '"' || c == '\\') { dst[j++] = '\\'; dst[j++] = c; }
+        else if ((uint8_t)c >= 0x20) dst[j++] = c;
+    }
+    dst[j] = 0;
+}
+
+// =============================================================================
+//  Käsitlejad
+// =============================================================================
+static esp_err_t h_index(httpd_req_t *req) {
+    logHotspot(req);
+    if (!authorizedPage(req)) return ESP_OK;
+    return sendPage(req, INDEX_HTML);
+}
+
+static esp_err_t h_settings(httpd_req_t *req) {
+    if (!authorizedPage(req)) return ESP_OK;
+    return sendPage(req, SETTINGS_HTML);
+}
+
+static esp_err_t h_style(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/css");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
+    return httpd_resp_send(req, COMMON_CSS, strlen_P(COMMON_CSS));
+}
+
+static esp_err_t h_login_get(httpd_req_t *req) {
+    logHotspot(req);
+    return sendPage(req, LOGIN_HTML);
+}
+
+// Loe kogu päringu keha (vormid on väikesed)
+static bool readBody(httpd_req_t *req, char *body, size_t cap) {
+    int len = req->content_len;
+    if (len <= 0 || len >= (int)cap) return false;
+    int got = 0;
+    while (got < len) {
+        int r = httpd_req_recv(req, body + got, len - got);
+        if (r <= 0) { if (r == HTTPD_SOCK_ERR_TIMEOUT) continue; return false; }
+        got += r;
+    }
+    body[got] = 0;
+    return true;
+}
+
+static bool formField(const char *body, const char *key, char *out, size_t len);
+
+static esp_err_t h_login_post(httpd_req_t *req) {
+    char body[256], pass[80] = "";
+    bool ok = readBody(req, body, sizeof(body)) && formField(body, "pass", pass, sizeof(pass)) &&
+              Auth::checkPassword(pass);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    if (ok) {
+        static char cookie[128];
+        snprintf(cookie, sizeof(cookie), "simcam=%s; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax",
+                 Auth::cookieValue().c_str());
+        httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+        httpd_resp_set_hdr(req, "Location", "/");
+        LOGI(TAG, "Sisselogimine õnnestus");
+    } else {
+        vTaskDelay(pdMS_TO_TICKS(800));                     // aeglustab parooli arvamist
+        httpd_resp_set_hdr(req, "Location", "/login?e=1");
+        LOGW(TAG, "Vale parool");
+    }
+    return httpd_resp_send(req, "", 0);
+}
+
+static esp_err_t h_logout(httpd_req_t *req) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Set-Cookie", "simcam=; Path=/; Max-Age=0");
+    httpd_resp_set_hdr(req, "Location", "/login");
+    return httpd_resp_send(req, "", 0);
+}
+
+static esp_err_t h_password(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    char body[256], pass[80] = "";
+    httpd_resp_set_type(req, "application/json");
+    if (!readBody(req, body, sizeof(body)) || !formField(body, "pass", pass, sizeof(pass)) ||
+        !Auth::setPassword(pass)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"ok\":false}");
+    }
+    // Uus küpsis, et kasutaja jääks sisse logituks
+    static char cookie[128];
+    snprintf(cookie, sizeof(cookie), "simcam=%s; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax",
+             Auth::cookieValue().c_str());
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static esp_err_t h_status(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    LTE::Status m = LTE::status();
+    char op[64], err[200], model[64];
+    jsonEsc(op, sizeof(op), m.op);
+    jsonEsc(err, sizeof(err), m.lastError);
+    jsonEsc(model, sizeof(model), m.model);
+
+    uint32_t connS = (m.connected && m.connectedSinceMs) ? (millis() - m.connectedSinceMs) / 1000 : 0;
+    const Settings::Data cfgd = Settings::get();
+    const char *ip = m.connected ? m.ip : (cfgd.expectedIp[0] ? cfgd.expectedIp : "-");
+
+    WifiMgr::Status w = WifiMgr::status();
+    char staSsid[70], apSsid[70];
+    jsonEsc(staSsid, sizeof(staSsid), w.staSsid);
+    jsonEsc(apSsid, sizeof(apSsid), w.apSsid);
+
+    char buf[1900];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"wifi\":{\"sta_en\":%s,\"sta_ok\":%s,\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\","
+        "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d},"
+        "\"lte\":{\"enabled\":%s,\"state\":\"%s\",\"connected\":%s,\"ip\":\"%s\",\"expected_ip\":\"%s\","
+        "\"ip_ok\":%s,\"operator\":\"%s\",\"tech\":\"%s\",\"csq\":%d,\"rssi\":%d,"
+        "\"rsrp\":%d,\"rsrq\":%.1f,\"reg\":%d,\"model\":\"%s\",\"imei\":\"%s\","
+        "\"baud\":%lu,\"cmux\":%s,\"conn_s\":%lu,\"reconnects\":%lu,\"error\":\"%s\"},"
+        "\"cam\":{\"sensor\":\"%s\",\"res\":\"%s\",\"fps\":%.2f,\"frame_kb\":%.1f,"
+        "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d,\"rot_ms\":%.0f},"
+        "\"sys\":{\"uptime\":%llu,\"heap_free\":%u,\"heap_total\":%u,\"heap_min\":%u,"
+        "\"psram_free\":%u,\"psram_total\":%u,\"temp\":%.1f,\"rtsp_clients\":%d,"
+        "\"http_streams\":%d,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\"}}",
+        w.staEnabled ? "true" : "false", w.staConnected ? "true" : "false", staSsid, w.staIp,
+        w.staRssi, w.channel, w.apEnabled ? "true" : "false", apSsid, w.apIp, w.apClients,
+        LTE::enabled() ? "true" : "false",
+        LTE::enabled() ? LTE::stateName(m.state) : "DISABLED", m.connected ? "true" : "false", m.ip, cfgd.expectedIp,
+        m.ipMatchesExpected ? "true" : "false", op, m.tech, m.csq, m.rssiDbm,
+        m.rsrpDbm, m.rsrqDb, m.regStat, model, m.imei,
+        (unsigned long)m.baud, m.cmux ? "true" : "false", (unsigned long)connS,
+        (unsigned long)m.reconnects, err,
+        Camera::sensorName(), Camera::resolutionName(), Camera::fps(),
+        Camera::lastFrameBytes() / 1024.0f, Camera::afStatus(),
+        Camera::afSupported() ? "true" : "false", Camera::consumers(), Camera::rotation(), Camera::rotateMs(),
+        (unsigned long long)(esp_timer_get_time() / 1000000ULL),
+        ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(),
+        ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
+        RtspServer::clients(), (int)s_streams, ip, RTSP_PORT, RTSP_PATH,
+        SIMCAM_VERSION);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, buf, n);
+}
+
+static esp_err_t h_focus(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    bool ok = Camera::refocus();
+    if (!ok) httpd_resp_set_status(req, "409 Conflict");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"AF not supported\"}");
+}
+
+static void rebootTask(void *) {
+    vTaskDelay(pdMS_TO_TICKS(800));      // lase HTTP vastusel kohale jõuda
+    ESP.restart();
+}
+
+static esp_err_t h_reboot(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    LOGW(TAG, "Taaskäivitus veebiliidesest");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    xTaskCreate(rebootTask, "reboot", 2048, nullptr, 1, nullptr);
+    return ESP_OK;
+}
+
+static esp_err_t h_capture(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    Camera::Frame fr;
+    if (!Camera::waitFrame(fr, 0, 3000)) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=simcam.jpg");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t r = httpd_resp_send(req, (const char *)fr.buf, fr.len);
+    Camera::freeFrame(fr);
+    return r;
+}
+
+// --- Seaded: WiFi klient, hotspot, LTE ---------------------------------------
+static void urlDecode(char *s) {
+    char *o = s;
+    for (; *s; s++) {
+        if (*s == '+') *o++ = ' ';
+        else if (*s == '%' && isxdigit((uint8_t)s[1]) && isxdigit((uint8_t)s[2])) {
+            char h[3] = {s[1], s[2], 0};
+            *o++ = (char)strtol(h, nullptr, 16);
+            s += 2;
+        } else *o++ = *s;
+    }
+    *o = 0;
+}
+
+// Loe vormi väli; tagastab false, kui välja pole
+static bool formField(const char *body, const char *key, char *out, size_t len) {
+    if (httpd_query_key_value(body, key, out, len) != ESP_OK) return false;
+    urlDecode(out);
+    return true;
+}
+
+// --- FOTA ----------------------------------------------------------------------
+static esp_err_t sendJson(httpd_req_t *req, const String &j) {
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, j.c_str(), j.length());
+}
+
+static esp_err_t h_ota(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    return sendJson(req, Ota::statusJson());
+}
+
+static esp_err_t h_ota_check(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    Ota::checkNow();
+    return sendJson(req, "{\"ok\":true}");
+}
+
+static esp_err_t h_ota_update(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    bool ok = Ota::startUpdate();
+    if (!ok) httpd_resp_set_status(req, "409 Conflict");
+    LOGW(TAG, "Püsivara uuendus veebiliidesest: %s", ok ? "alustatud" : "pole saadaval");
+    return sendJson(req, ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"Uuendust pole saadaval\"}");
+}
+
+static esp_err_t h_favicon(httpd_req_t *req) {
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+    return httpd_resp_send(req, "", 0);
+}
+
+static esp_err_t h_config_get(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    Settings::Data d = Settings::get();
+    char ss[70], as[70], apn[130], eip[40], buf[600];
+    jsonEsc(ss, sizeof(ss), d.staSsid);
+    jsonEsc(as, sizeof(as), d.apSsid);
+    jsonEsc(apn, sizeof(apn), d.apn);
+    jsonEsc(eip, sizeof(eip), d.expectedIp);
+    // Paroole ei saadeta kunagi välja – ainult info, kas need on määratud
+    int n = snprintf(buf, sizeof(buf),
+        "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
+        "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
+        "\"apn\":\"%s\",\"exp_ip\":\"%s\",\"has_pin\":%s,\"default_pass\":%s}",
+        d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
+        d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
+        d.lteEnabled ? "true" : "false", apn, eip, d.simPin[0] ? "true" : "false",
+        strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, buf, n);
+}
+
+static void wifiRestartTask(void *) {
+    vTaskDelay(pdMS_TO_TICKS(700));      // lase vastusel enne WiFi taaskäivitust kohale jõuda
+    WifiMgr::restart();
+    vTaskDelete(nullptr);
+}
+
+static esp_err_t h_config_post(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    char body[512];
+    if (!readBody(req, body, sizeof(body))) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
+        return ESP_FAIL;
+    }
+
+    Settings::Data d = Settings::get();
+    const bool oldLte = d.lteEnabled;
+    char v[70];
+    if (formField(body, "sta_en", v, sizeof(v))) d.staEnabled = v[0] == '1';
+    if (formField(body, "sta_ssid", v, sizeof(v))) strlcpy(d.staSsid, v, sizeof(d.staSsid));
+    if (formField(body, "sta_pass", v, sizeof(v)) && v[0]) strlcpy(d.staPass, v, sizeof(d.staPass));
+    if (formField(body, "ap_en", v, sizeof(v))) d.apEnabled = v[0] == '1';
+    if (formField(body, "ap_ssid", v, sizeof(v))) strlcpy(d.apSsid, v, sizeof(d.apSsid));
+    if (formField(body, "ap_pass", v, sizeof(v)) && v[0]) strlcpy(d.apPass, v, sizeof(d.apPass));
+    if (formField(body, "lte_en", v, sizeof(v))) d.lteEnabled = v[0] == '1';
+    if (formField(body, "apn", v, sizeof(v))) strlcpy(d.apn, v, sizeof(d.apn));
+    if (formField(body, "exp_ip", v, sizeof(v))) strlcpy(d.expectedIp, v, sizeof(d.expectedIp));
+    if (formField(body, "sim_pin", v, sizeof(v)) && v[0]) strlcpy(d.simPin, v, sizeof(d.simPin));
+    if (formField(body, "sim_pin_clear", v, sizeof(v)) && v[0] == '1') d.simPin[0] = 0;
+    const bool modemChanged = strcmp(d.apn, Settings::get().apn) || strcmp(d.simPin, Settings::get().simPin);
+
+    httpd_resp_set_type(req, "application/json");
+    if (!Settings::save(d)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req,
+            "{\"ok\":false,\"error\":\"Vigased seaded: SSID ei tohi olla tühi, hotspoti parool min 8 märki, PIN ainult numbrid\"}");
+    }
+    bool reboot = d.lteEnabled != oldLte || (d.lteEnabled && modemChanged);   // rakendub taaskäivitusel
+    httpd_resp_sendstr(req, reboot ? "{\"ok\":true,\"reboot\":true}" : "{\"ok\":true,\"reboot\":false}");
+    LOGI(TAG, "Seaded muudetud veebiliidesest%s", reboot ? " (LTE muutus → vajab taaskäivitust)" : "");
+    xTaskCreate(wifiRestartTask, "wifi_rst", 4096, nullptr, 2, nullptr);
+    return ESP_OK;
+}
+
+static esp_err_t h_scan(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    String j = WifiMgr::scanJson();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, j.c_str(), j.length());
+}
+
+// --- Kaamera seaded: /api/cam?var=X&val=Y  |  /api/cam?reg=0x3500  |  /api/cam
+static esp_err_t h_cam(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    char q[96] = "", var[24] = "", val[16] = "", reg[16] = "";
+    httpd_req_get_url_query_str(req, q, sizeof(q));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    if (httpd_query_key_value(q, "reg", reg, sizeof(reg)) == ESP_OK) {
+        int r = (int)strtol(reg, nullptr, 0);
+        char b[48];
+        snprintf(b, sizeof(b), "{\"reg\":%d,\"val\":%d}", r, Camera::readReg(r));
+        return httpd_resp_sendstr(req, b);
+    }
+    if (httpd_query_key_value(q, "var", var, sizeof(var)) == ESP_OK &&
+        httpd_query_key_value(q, "val", val, sizeof(val)) == ESP_OK) {
+        if (!Camera::control(var, atoi(val))) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            return httpd_resp_sendstr(req, "{\"ok\":false}");
+        }
+    }
+    String j = Camera::settingsJson();
+    return httpd_resp_send(req, j.c_str(), j.length());
+}
+
+// --- MJPEG voog (asünkroonne) -----------------------------------------------
+static void streamTask(void *arg) {
+    httpd_req_t *req = (httpd_req_t *)arg;
+    Camera::Frame fr;
+    uint32_t lastSeq = 0;
+    char part[64];
+    Camera::addConsumer();
+    LOGI(TAG, "MJPEG vaataja lisandus (%d)", (int)s_streams);
+
+    httpd_resp_set_type(req, STREAM_CT);
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Framerate", "15");
+
+    for (;;) {
+        if (!Camera::waitFrame(fr, lastSeq, 5000)) continue;   // kaamera ootel
+        lastSeq = fr.seq;
+        int n = snprintf(part, sizeof(part), STREAM_PART, (unsigned)fr.len);
+        if (httpd_resp_send_chunk(req, STREAM_SEP, strlen(STREAM_SEP)) != ESP_OK) break;
+        if (httpd_resp_send_chunk(req, part, n) != ESP_OK) break;
+        if (httpd_resp_send_chunk(req, (const char *)fr.buf, fr.len) != ESP_OK) break;
+    }
+
+    Camera::freeFrame(fr);
+    Camera::removeConsumer();
+    httpd_req_async_handler_complete(req);
+    s_streams--;
+    LOGI(TAG, "MJPEG vaataja lahkus");
+    vTaskDelete(nullptr);
+}
+
+static esp_err_t h_stream(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    if (s_streams >= HTTP_MAX_STREAMS) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_sendstr(req, "Liiga palju vaatajaid");
+    }
+    httpd_req_t *copy = nullptr;
+    if (httpd_req_async_handler_begin(req, &copy) != ESP_OK) return ESP_FAIL;
+    s_streams++;
+    if (xTaskCreatePinnedToCore(streamTask, "mjpeg", 6144, copy, 3, nullptr, 1) != pdPASS) {
+        s_streams--;
+        httpd_req_async_handler_complete(copy);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+// Telefonide internetikontrollid (Android /generate_204, iOS /hotspot-detect.html,
+// Windows /connecttest.txt, Firefox /canonical.html …) ja kõik muud tundmatud
+// aadressid suunatakse hotspotis kaamera lehele → avaneb automaatselt.
+static esp_err_t h_notfound(httpd_req_t *req, httpd_err_code_t) {
+    if (viaHotspot(req)) {
+        char host[64] = "";
+        httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
+        LOGI(TAG, "Captive: %s%s → http://" WIFI_AP_IP_STR "/", host, req->uri);
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", "http://" WIFI_AP_IP_STR "/");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        return httpd_resp_send(req, "", 0);
+    }
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+    return ESP_FAIL;
+}
+
+// =============================================================================
+bool begin() {
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.server_port      = HTTP_PORT;
+    cfg.ctrl_port        = 32768;
+    cfg.max_uri_handlers = 28;
+    cfg.max_open_sockets = 7;
+    cfg.lru_purge_enable = true;          // vabasta vanimad, kui soketid otsas
+    cfg.stack_size       = 8192;
+    cfg.core_id          = 1;
+    cfg.recv_wait_timeout = 10;           // aeglane mobiilivõrk
+    cfg.send_wait_timeout = 10;
+
+    if (httpd_start(&s_server, &cfg) != ESP_OK) {
+        LOGE(TAG, "HTTP serveri käivitamine ebaõnnestus");
+        return false;
+    }
+    const httpd_uri_t uris[] = {
+        {"/",           HTTP_GET,  h_index,   nullptr},
+        {"/settings",   HTTP_GET,  h_settings, nullptr},
+        {"/style.css",  HTTP_GET,  h_style,   nullptr},
+        {"/login",      HTTP_GET,  h_login_get,  nullptr},
+        {"/login",      HTTP_POST, h_login_post, nullptr},
+        {"/logout",     HTTP_GET,  h_logout,  nullptr},
+        {"/api/password", HTTP_POST, h_password, nullptr},
+        {"/api/status", HTTP_GET,  h_status,  nullptr},
+        {"/api/focus",  HTTP_POST, h_focus,   nullptr},
+        {"/api/reboot", HTTP_POST, h_reboot,  nullptr},
+        {"/capture",    HTTP_GET,  h_capture, nullptr},
+        {"/stream",     HTTP_GET,  h_stream,  nullptr},
+        {"/api/config", HTTP_GET,  h_config_get,  nullptr},
+        {"/api/config", HTTP_POST, h_config_post, nullptr},
+        {"/api/scan",   HTTP_GET,  h_scan,    nullptr},
+        {"/api/cam",    HTTP_GET,  h_cam,     nullptr},
+        {"/favicon.ico", HTTP_GET, h_favicon, nullptr},
+        {"/api/ota",    HTTP_GET,  h_ota,     nullptr},
+        {"/api/ota/check",  HTTP_POST, h_ota_check,  nullptr},
+        {"/api/ota/update", HTTP_POST, h_ota_update, nullptr},
+    };
+    for (const auto &u : uris) httpd_register_uri_handler(s_server, &u);
+    httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, h_notfound);
+    LOGI(TAG, "Veebiliides pordil %d", HTTP_PORT);
+    return true;
+}
+
+int streamClients() { return s_streams; }
+
+}  // namespace WebUI

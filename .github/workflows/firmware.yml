@@ -1,0 +1,57 @@
+# Püsivara ehitus ja release
+#   * iga push main-i / pull request → kompileerimise kontroll
+#   * silt v* (nt v1.2.0) → GitHub release koos püsivarafailidega
+#     Seade leiab selle FOTA kaudu (⚙ → Püsivara → Kontrolli uuendusi).
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Build
+        env:
+          SIMCAM_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: pio run -e t-simcam
+
+      - name: Prepare release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cp .pio/build/t-simcam/firmware.bin simcam-firmware.bin
+          cp .pio/build/t-simcam/firmware.factory.bin simcam-factory.bin
+          sha256sum simcam-*.bin > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            simcam-firmware.bin
+            simcam-factory.bin
+            SHA256SUMS.txt
+          generate_release_notes: true
