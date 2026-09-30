@@ -17,7 +17,6 @@ struct Data {
     int  rotation;            // kaamerapildi pööre: 0 / 90 / 180 / 270 (päripäeva)
     char simPin[9];           // SIM PIN (tühi = PIN-i ei saadeta)
     char apn[64];             // APN, nt operaatori staatilise IP APN
-    char expectedIp[16];      // oodatav staatiline IP (ainult kontrolliks)
     char webPass[65];         // veebiliidese + RTSP parool
     char authSalt[17];
     bool rtspAuth;            // kas RTSP nõuab parooli        // juhuslik sool sessiooniküpsise jaoks (hex)

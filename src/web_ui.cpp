@@ -27,6 +27,38 @@ namespace WebUI {
 static httpd_handle_t   s_server = nullptr;
 static std::atomic<int> s_streams{0};
 
+// Iga MJPEG vaataja statistika (kaadrisagedus ja andmemaht), et veebileht saaks
+// näidata, mida see brauser tegelikult kätte saab. Vaataja tuvastatakse
+// /stream?id=<juhuslik> parameetriga.
+struct ViewStat {
+    char     id[16];
+    bool     used;
+    float    fps;
+    float    kBps;
+    uint32_t updated;
+};
+static ViewStat s_views[HTTP_MAX_STREAMS];
+static portMUX_TYPE s_viewMux = portMUX_INITIALIZER_UNLOCKED;
+
+struct StreamArg { httpd_req_t *req; int slot; };
+
+static int viewAlloc(const char *id) {
+    int slot = -1;
+    portENTER_CRITICAL(&s_viewMux);
+    for (int i = 0; i < HTTP_MAX_STREAMS; i++)
+        if (!s_views[i].used) {
+            s_views[i] = {};
+            strlcpy(s_views[i].id, id, sizeof(s_views[i].id));
+            s_views[i].used = true;
+            s_views[i].updated = millis();
+            slot = i;
+            break;
+        }
+    portEXIT_CRITICAL(&s_viewMux);
+    return slot;
+}
+
+
 #define PART_BOUNDARY "simcamframe"
 static const char STREAM_CT[]   = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 static const char STREAM_SEP[]  = "\r\n--" PART_BOUNDARY "\r\n";
@@ -202,7 +234,7 @@ static esp_err_t h_status(httpd_req_t *req) {
 
     uint32_t connS = (m.connected && m.connectedSinceMs) ? (millis() - m.connectedSinceMs) / 1000 : 0;
     const Settings::Data cfgd = Settings::get();
-    const char *ip = m.connected ? m.ip : (cfgd.expectedIp[0] ? cfgd.expectedIp : "-");
+    const char *ip = m.connected ? m.ip : "-";
 
     WifiMgr::Status w = WifiMgr::status();
     char staSsid[70], apSsid[70];
@@ -213,8 +245,8 @@ static esp_err_t h_status(httpd_req_t *req) {
     int n = snprintf(buf, sizeof(buf),
         "{\"wifi\":{\"sta_en\":%s,\"sta_ok\":%s,\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\","
         "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d,\"ap_temp\":%s},"
-        "\"lte\":{\"enabled\":%s,\"state\":\"%s\",\"connected\":%s,\"ip\":\"%s\",\"expected_ip\":\"%s\","
-        "\"ip_ok\":%s,\"operator\":\"%s\",\"tech\":\"%s\",\"csq\":%d,\"rssi\":%d,"
+        "\"lte\":{\"enabled\":%s,\"state\":\"%s\",\"connected\":%s,\"ip\":\"%s\","
+        "\"operator\":\"%s\",\"tech\":\"%s\",\"csq\":%d,\"rssi\":%d,"
         "\"rsrp\":%d,\"rsrq\":%.1f,\"reg\":%d,\"model\":\"%s\",\"imei\":\"%s\","
         "\"baud\":%lu,\"cmux\":%s,\"conn_s\":%lu,\"reconnects\":%lu,\"error\":\"%s\"},"
         "\"cam\":{\"sensor\":\"%s\",\"res\":\"%s\",\"fps\":%.2f,\"frame_kb\":%.1f,"
@@ -225,8 +257,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         w.staEnabled ? "true" : "false", w.staConnected ? "true" : "false", staSsid, w.staIp,
         w.staRssi, w.channel, w.apEnabled ? "true" : "false", apSsid, w.apIp, w.apClients, w.apTemp ? "true" : "false",
         LTE::enabled() ? "true" : "false",
-        LTE::enabled() ? LTE::stateName(m.state) : "DISABLED", m.connected ? "true" : "false", m.ip, cfgd.expectedIp,
-        m.ipMatchesExpected ? "true" : "false", op, m.tech, m.csq, m.rssiDbm,
+        LTE::enabled() ? LTE::stateName(m.state) : "DISABLED", m.connected ? "true" : "false", m.ip, op, m.tech, m.csq, m.rssiDbm,
         m.rsrpDbm, m.rsrqDb, m.regStat, model, m.imei,
         (unsigned long)m.baud, m.cmux ? "true" : "false", (unsigned long)connS,
         (unsigned long)m.reconnects, err,
@@ -358,6 +389,25 @@ static esp_err_t h_ota_update(httpd_req_t *req) {
     return sendJson(req, ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"Uuendust pole saadaval\"}");
 }
 
+// --- Vaataja statistika: /api/view?id=<id> -------------------------------------
+static esp_err_t h_view(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    char q[64] = "", id[16] = "";
+    httpd_req_get_url_query_str(req, q, sizeof(q));
+    httpd_query_key_value(q, "id", id, sizeof(id));
+    float fps = -1, kBps = -1;
+    portENTER_CRITICAL(&s_viewMux);
+    for (auto &v : s_views)
+        if (v.used && id[0] && !strcmp(v.id, id)) { fps = v.fps; kBps = v.kBps; }
+    portEXIT_CRITICAL(&s_viewMux);
+    char b[160];
+    snprintf(b, sizeof(b), "{\"fps\":%.1f,\"kBps\":%.1f,\"cam_fps\":%.1f,\"rotate\":%d,\"frame_kb\":%.1f}",
+             fps, kBps, Camera::fps(), Camera::rotation(), Camera::lastFrameBytes() / 1024.0f);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, b);
+}
+
 static esp_err_t h_favicon(httpd_req_t *req) {
     httpd_resp_set_status(req, "204 No Content");
     httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
@@ -367,19 +417,18 @@ static esp_err_t h_favicon(httpd_req_t *req) {
 static esp_err_t h_config_get(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     Settings::Data d = Settings::get();
-    char ss[70], as[70], apn[130], eip[40], buf[600];
+    char ss[70], as[70], apn[130], buf[600];
     jsonEsc(ss, sizeof(ss), d.staSsid);
     jsonEsc(as, sizeof(as), d.apSsid);
     jsonEsc(apn, sizeof(apn), d.apn);
-    jsonEsc(eip, sizeof(eip), d.expectedIp);
     // Paroole ei saadeta kunagi välja – ainult info, kas need on määratud
     int n = snprintf(buf, sizeof(buf),
         "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
-        "\"apn\":\"%s\",\"exp_ip\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s}",
+        "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s}",
         d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
-        d.lteEnabled ? "true" : "false", apn, eip, d.simPin[0] ? "true" : "false",
+        d.lteEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
         strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -411,7 +460,6 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "ap_pass", v, sizeof(v)) && v[0]) strlcpy(d.apPass, v, sizeof(d.apPass));
     if (formField(body, "lte_en", v, sizeof(v))) d.lteEnabled = v[0] == '1';
     if (formField(body, "apn", v, sizeof(v))) strlcpy(d.apn, v, sizeof(d.apn));
-    if (formField(body, "exp_ip", v, sizeof(v))) strlcpy(d.expectedIp, v, sizeof(d.expectedIp));
     if (formField(body, "sim_pin", v, sizeof(v)) && v[0]) strlcpy(d.simPin, v, sizeof(d.simPin));
     if (formField(body, "sim_pin_clear", v, sizeof(v)) && v[0] == '1') d.simPin[0] = 0;
     if (formField(body, "rtsp_auth", v, sizeof(v))) d.rtspAuth = v[0] == '1';
@@ -468,7 +516,10 @@ static esp_err_t h_cam(httpd_req_t *req) {
 
 // --- MJPEG voog (asünkroonne) -----------------------------------------------
 static void streamTask(void *arg) {
-    httpd_req_t *req = (httpd_req_t *)arg;
+    StreamArg sa = *(StreamArg *)arg;
+    delete (StreamArg *)arg;
+    httpd_req_t *req = sa.req;
+    uint32_t winStart = millis(), winFrames = 0, winBytes = 0;
     Camera::Frame fr;
     uint32_t lastSeq = 0;
     char part[64];
@@ -487,8 +538,21 @@ static void streamTask(void *arg) {
         if (httpd_resp_send_chunk(req, STREAM_SEP, strlen(STREAM_SEP)) != ESP_OK) break;
         if (httpd_resp_send_chunk(req, part, n) != ESP_OK) break;
         if (httpd_resp_send_chunk(req, (const char *)fr.buf, fr.len) != ESP_OK) break;
+        winFrames++;
+        winBytes += fr.len + n + strlen(STREAM_SEP);
+        uint32_t now = millis();
+        if (sa.slot >= 0 && now - winStart >= 2000) {
+            float dt = (now - winStart) / 1000.0f;
+            portENTER_CRITICAL(&s_viewMux);
+            s_views[sa.slot].fps = winFrames / dt;
+            s_views[sa.slot].kBps = winBytes / 1024.0f / dt;
+            s_views[sa.slot].updated = now;
+            portEXIT_CRITICAL(&s_viewMux);
+            winStart = now; winFrames = winBytes = 0;
+        }
     }
 
+    if (sa.slot >= 0) { portENTER_CRITICAL(&s_viewMux); s_views[sa.slot].used = false; portEXIT_CRITICAL(&s_viewMux); }
     Camera::freeFrame(fr);
     Camera::removeConsumer();
     httpd_req_async_handler_complete(req);
@@ -503,10 +567,16 @@ static esp_err_t h_stream(httpd_req_t *req) {
         httpd_resp_set_status(req, "503 Service Unavailable");
         return httpd_resp_sendstr(req, "Liiga palju vaatajaid");
     }
+    char q[64] = "", id[16] = "";
+    httpd_req_get_url_query_str(req, q, sizeof(q));
+    httpd_query_key_value(q, "id", id, sizeof(id));
     httpd_req_t *copy = nullptr;
     if (httpd_req_async_handler_begin(req, &copy) != ESP_OK) return ESP_FAIL;
     s_streams++;
-    if (xTaskCreatePinnedToCore(streamTask, "mjpeg", 6144, copy, 3, nullptr, 1) != pdPASS) {
+    StreamArg *sa = new StreamArg{copy, id[0] ? viewAlloc(id) : -1};
+    if (xTaskCreatePinnedToCore(streamTask, "mjpeg", 6144, sa, 3, nullptr, 1) != pdPASS) {
+        if (sa->slot >= 0) s_views[sa->slot].used = false;
+        delete sa;
         s_streams--;
         httpd_req_async_handler_complete(copy);
         return ESP_FAIL;
@@ -568,6 +638,7 @@ bool begin() {
         {"/favicon.ico", HTTP_GET, h_favicon, nullptr},
         {"/api/ota",    HTTP_GET,  h_ota,     nullptr},
         {"/api/simpin", HTTP_POST, h_simpin,  nullptr},
+        {"/api/view",   HTTP_GET,  h_view,    nullptr},
         {"/api/ota/check",  HTTP_POST, h_ota_check,  nullptr},
         {"/api/ota/update", HTTP_POST, h_ota_update, nullptr},
     };

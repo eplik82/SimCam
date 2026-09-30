@@ -563,8 +563,6 @@ static void lteTask(void *) {
             String ip = PPP.localIP().toString();
             ST_LOCK();
             strlcpy(s_st.ip, ip.c_str(), sizeof(s_st.ip));
-            const char *expIp = Settings::get().expectedIp;
-            s_st.ipMatchesExpected = !expIp[0] || ip == expIp;
             s_st.cmux = (PPP.mode() == ESP_MODEM_MODE_CMUX);
             s_st.connectedSinceMs = millis();
             s_st.lastError[0] = 0;
@@ -572,9 +570,6 @@ static void lteTask(void *) {
             // Internetist tulnud ühenduste vastused peavad minema LTE kaudu,
             // ka siis, kui WiFi on samal ajal ühendatud.
             PPP.setDefault();
-            if (expIp[0] && ip != expIp)
-                LOGW(TAG, "IP %s ei ole oodatud %s – kontrolli APN-i/staatilise IP teenust",
-                     ip.c_str(), expIp);
             LOGI(TAG, "*** ONLINE: rtsp://%s:%d%s  http://%s/ ***",
                  ip.c_str(), RTSP_PORT, RTSP_PATH, ip.c_str());
             backoff = 5000;
@@ -614,7 +609,6 @@ static void lteTask(void *) {
             ST_LOCK();
             s_st.reconnects++;
             strlcpy(s_st.ip, "-", sizeof(s_st.ip));
-            s_st.ipMatchesExpected = false;
             ST_UNLOCK();
             PPP.end();
             s_hasIp = false;

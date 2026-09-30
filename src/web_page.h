@@ -42,41 +42,58 @@ body{display:flex;flex-direction:column;color:#fff}
 .bar button{background:#1b2029;border-color:#2a303b;color:#e8ebf1;min-width:52px;justify-content:center;padding:10px 14px;font-size:15px}
 .bar button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .bar .lbl{font-size:13px}
-@media (max-width:420px){.bar .lbl{display:none}.bar button{font-size:20px;padding:10px 12px}}
+.info{display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 10px;background:#0d0f14;color:#aab2c0;font-size:13px;font-variant-numeric:tabular-nums;border-top:1px solid #222;min-height:30px}
+.info b{color:#e8ebf1;font-weight:600}
+.info .warn{color:#f0b429}
+.rot{display:inline-flex;border:1px solid #2a303b;border-radius:10px;overflow:hidden}
+.bar .rot button{border:0;border-radius:0;min-width:48px;padding:10px 10px;border-right:1px solid #2a303b}
+.bar .rot button:last-child{border-right:0}
+@media (max-width:420px){.bar .lbl{display:none}.bar button{font-size:18px;padding:10px 11px}.bar .rot button{font-size:14px;min-width:42px}}
 </style></head><body>
 <div class="stage">
   <img id="view" alt="">
   <span class="msg" id="msg">Ühendan…</span>
   <a class="gear" href="/settings" title="Seaded">⚙</a>
 </div>
+<div class="info" id="info"><span id="iStat">Ühendan…</span><span class="warn" id="iWarn" style="display:none">⚠ 90°/270° pööre vähendab kaadrisagedust (~3–4 fps)</span></div>
 <div class="bar">
   <button id="bPlay" title="Peata / jätka vaade">⏸<span class="lbl">Peata</span></button>
-  <button id="bRotL" title="Pööra vastupäeva">↺<span class="lbl">90°</span></button>
-  <button id="bRotR" title="Pööra päripäeva">↻<span class="lbl">90°</span></button>
+  <span class="rot" title="Pildi pööre"><button data-r="0">0°</button><button data-r="90">90°</button><button data-r="180">180°</button><button data-r="270">270°</button></span>
   <button id="bFocus" title="Autofookus">◎<span class="lbl">Fookus</span></button>
   <button id="bSnap" title="Hetktõmmis">📷<span class="lbl">Hetktõmmis</span></button>
 </div>
 <div class="toast" id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);let playing=false,rot=0;
+const vid=Math.random().toString(36).slice(2,12);
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)}
 function setPlay(p){playing=p;const v=$('view');
- if(p){v.src='/stream?'+Date.now();$('bPlay').innerHTML='⏸<span class="lbl">Peata</span>';$('bPlay').classList.remove('on')}
+ if(p){v.src='/stream?id='+vid+'&t='+Date.now();$('bPlay').innerHTML='⏸<span class="lbl">Peata</span>';$('bPlay').classList.remove('on')}
  else{v.removeAttribute('src');$('msg').textContent='Vaade peatatud';$('bPlay').innerHTML='▶<span class="lbl">Jätka</span>';$('bPlay').classList.add('on')}}
 $('bPlay').onclick=()=>setPlay(!playing);
 $('view').onload=()=>{$('msg').textContent=''};
 $('view').onerror=()=>{if(playing){$('msg').textContent='Voog katkes – ühendan uuesti…';setTimeout(()=>playing&&setPlay(true),3000)}};
 async function api(u,o){const r=await fetch(u,o);if(r.status==401){location.href='/login';throw 0}return r}
-async function rotate(d){const n=(rot+d+360)%360;
- try{const r=await api('/api/cam?var=rotate&val='+n);if(r.ok){rot=n;toast('Pööre '+n+'°');if(playing)setPlay(true)}else toast('Pööramine ebaõnnestus')}catch(e){}}
-$('bRotL').onclick=()=>rotate(-90);$('bRotR').onclick=()=>rotate(90);
+function showRot(){document.querySelectorAll('.rot button').forEach(b=>b.classList.toggle('on',+b.dataset.r===rot));
+ $('iWarn').style.display=(rot==90||rot==270)?'':'none'}
+async function rotate(n){if(n===rot)return;
+ try{const r=await api('/api/cam?var=rotate&val='+n);if(r.ok){rot=n;showRot();toast('Pööre '+n+'°');if(playing)setPlay(true)}else toast('Pööramine ebaõnnestus')}catch(e){}}
+document.querySelectorAll('.rot button').forEach(b=>b.onclick=()=>rotate(+b.dataset.r));
+async function stats(){
+ if(!playing){$('iStat').textContent='Vaade peatatud'}
+ else try{const d=await (await api('/api/view?id='+vid,{cache:'no-store'})).json();
+  if(d.rotate!==rot){rot=d.rotate;showRot()}
+  if(d.fps<0)$('iStat').textContent='Ühendan…';
+  else $('iStat').innerHTML=`<b>${d.fps.toFixed(1)} fps</b> · <b>${d.kBps.toFixed(0)} kB/s</b> (${(d.kBps*8/1024).toFixed(2)} Mbit/s) · kaader ${d.frame_kb.toFixed(1)} kB`;
+ }catch(e){}
+ setTimeout(stats,2000)}
 $('bFocus').onclick=async()=>{const b=$('bFocus');b.disabled=true;
  try{const r=await api('/api/focus',{method:'POST'});toast(r.ok?'Autofookus käivitatud':'Autofookus pole saadaval')}catch(e){}
  setTimeout(()=>b.disabled=false,1500)};
 $('bSnap').onclick=()=>{const a=document.createElement('a');const t=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
  a.href='/capture?'+Date.now();a.download='simcam-'+t+'.jpg';document.body.appendChild(a);a.click();a.remove();toast('Hetktõmmis salvestatud')};
-api('/api/cam').then(r=>r.json()).then(c=>{rot=c.rotate||0}).catch(()=>{});
-setPlay(true);
+api('/api/cam').then(r=>r.json()).then(c=>{rot=c.rotate||0;showRot()}).catch(()=>{});
+setPlay(true);stats();
 </script></body></html>)HTML";
 
 // -----------------------------------------------------------------------------
@@ -118,6 +135,8 @@ label.chk input{width:18px;height:18px;margin:0;accent-color:var(--acc)}
 .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.bar>div{height:100%;width:0;background:var(--acc);transition:width .4s}
 .url{display:flex;gap:8px;align-items:center;margin:4px 0 8px}.url code{flex:1}
 hr{border:0;border-top:1px solid var(--line);margin:4px 0}
+.ipbox{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:14px}
+.ipbox b{font-variant-numeric:tabular-nums}
 </style></head><body>
 <header><a class="btn" href="/">← Vaade</a><h1>Seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
 <main>
@@ -193,7 +212,7 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0}
    <label>APN<input type="text" id="f_apn" maxlength="63" placeholder="nt operaatori staatilise IP APN"></label>
    <label>SIM PIN, mida seade kasutab<input type="password" id="f_pin" maxlength="8" inputmode="numeric" placeholder="(muutmata)"></label>
    <label class="chk"><input type="checkbox" id="f_pin_clear"> SIM-il pole PIN-i</label>
-   <label>Oodatav staatiline IP (valikuline)<input type="text" id="f_exp_ip" maxlength="15" placeholder="nt 213.x.x.x"></label>
+   <div class="ipbox" id="lteIp">Mobiilivõrgu IP: –</div>
    <div class="note">Ainult UART-modemiga (LilyGO T-PCIe SIM7600). MikroTik R11e-LTE puhul hoia väljas! Muudatused rakenduvad pärast taaskäivitust.</div>
    <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
@@ -233,7 +252,7 @@ let rtspAuth=true;
 async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-store'})).json();
  $('f_sta_en').checked=c.sta_en;$('f_sta_ssid').value=c.sta_ssid;$('f_sta_pass').placeholder=c.sta_has_pass?'(muutmata)':'(avatud võrk)';
  $('f_ap_en').checked=c.ap_en;$('f_ap_ssid').value=c.ap_ssid;
- $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;$('f_exp_ip').value=c.exp_ip;
+ $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;
  $('f_pin').placeholder=c.has_pin?'(salvestatud)':'(puudub)';$('f_pin_clear').checked=false;
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
  $('defpass').style.display=c.default_pass?'block':'none'}catch(e){}}
@@ -255,7 +274,7 @@ $('fAp').onsubmit=e=>{e.preventDefault();const p=$('f_ap_pass').value;if(p&&p.le
 $('fRtsp').onsubmit=e=>{e.preventDefault();save({rtsp_auth:$('f_rtsp_auth').checked?1:0},'RTSP seade salvestatud')};
 $('fLte').onsubmit=e=>{e.preventDefault();const pin=$('f_pin').value.trim();
  if(pin&&!/^[0-9]{4,8}$/.test(pin)){toast('PIN peab olema 4–8 numbrit');return}
- save({lte_en:$('f_lte_en').checked?1:0,apn:$('f_apn').value.trim(),sim_pin:pin,sim_pin_clear:$('f_pin_clear').checked?1:0,exp_ip:$('f_exp_ip').value.trim()},'LTE seaded salvestatud').then(o=>{if(o)$('f_pin').value=''})};
+ save({lte_en:$('f_lte_en').checked?1:0,apn:$('f_apn').value.trim(),sim_pin:pin,sim_pin_clear:$('f_pin_clear').checked?1:0},'LTE seaded salvestatud').then(o=>{if(o)$('f_pin').value=''})};
 $('fPw').onsubmit=async e=>{e.preventDefault();const a=$('p1').value,b=$('p2').value;
  if(a.length<4){toast('Parool peab olema vähemalt 4 märki');return}if(a!==b){toast('Paroolid ei kattu');return}
  try{const r=await api('/api/password',form({pass:a}));toast(r.ok?'Parool muudetud':'Parooli muutmine ebaõnnestus');if(r.ok){$('p1').value='';$('p2').value='';loadCfg()}}catch(e){}};
@@ -289,6 +308,7 @@ async function poll(){
   $('m_state').innerHTML=`<span class="dot ${cls}"></span>${m.state=='DISABLED'?'väljas':m.state}`;
   $('m_op').innerHTML=m.operator=='-'?'-':`${m.operator}${m.tech!='-'?' ('+m.tech+')':''} · ${m.csq>=99?'-':bars(cq(m.csq))+m.rssi+' dBm'}`;
   $('m_ip').textContent=m.ip;$('m_err').textContent=m.error||'-';
+  $('lteIp').innerHTML=m.connected?`📡 Mobiilivõrgu IP: <b>${m.ip}</b> (operaatorilt saadud)`:(m.state=='DISABLED'?'Mobiilivõrgu IP: – (LTE väljas)':`Mobiilivõrgu IP: – (IP-d pole veel saadud, olek ${m.state})`);
   if(s.rtsp_auth!==undefined&&s.rtsp_auth!==rtspAuth){rtspAuth=s.rtsp_auth;showRtsp()}
   $('c_res').textContent=c.sensor+' · '+c.res;$('c_fps').textContent=c.fps.toFixed(1)+' fps · '+c.frame_kb.toFixed(1)+' kB';
   $('c_af').textContent=c.af;$('c_rot').textContent=c.rotate+'°'+(c.rot_ms?` (${c.rot_ms} ms/kaader)`:'');

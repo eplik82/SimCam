@@ -25,7 +25,6 @@ static void defaults(Data &d) {
     d.rotation = CAM_ROTATION_DEFAULT;
     d.simPin[0] = 0;
     d.apn[0] = 0;
-    d.expectedIp[0] = 0;
     strlcpy(d.webPass, WEB_PASS_DEFAULT, sizeof(d.webPass));
     d.authSalt[0] = 0;
     d.rtspAuth = true;
@@ -57,7 +56,6 @@ void load() {
         d.rotation = p.getShort("rot", d.rotation);
         if (p.isKey("sim_pin")) p.getString("sim_pin", d.simPin, sizeof(d.simPin));
         if (p.isKey("apn")) p.getString("apn", d.apn, sizeof(d.apn));
-        if (p.isKey("exp_ip")) p.getString("exp_ip", d.expectedIp, sizeof(d.expectedIp));
         if (p.isKey("web_pass")) p.getString("web_pass", d.webPass, sizeof(d.webPass));
         d.rtspAuth = p.getBool("rtsp_auth", d.rtspAuth);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
@@ -107,7 +105,6 @@ bool save(const Data &din) {
     p.putShort("rot", d.rotation);
     p.putString("sim_pin", d.simPin);
     p.putString("apn", d.apn);
-    p.putString("exp_ip", d.expectedIp);
     p.putString("web_pass", d.webPass);
     p.putString("salt", d.authSalt);
     p.putBool("rtsp_auth", d.rtspAuth);

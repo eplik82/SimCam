@@ -21,8 +21,10 @@ release'ist (FOTA)**.
 ## Omadused
 
 * **Kaamera:** OV5640 (ka OV2640/OV3660), JPEG 800x600, pidev autofookus + nupp
-  „Fookus", pööramine 0/90/180/270° (kehtib ka RTSP-s), madal viivitus – aeglase
-  võrgu korral jäetakse kaadrid vahele, puhvrit ei kogune.
+  „Fookus", pööramine nuppudega 0°/90°/180°/270° (kehtib ka RTSP-s), madal viivitus –
+  aeglase võrgu korral jäetakse kaadrid vahele, puhvrit ei kogune.
+* **Pealeht:** pildi all tegelik kaadrisagedus ja võrgukiirus (kB/s, Mbit/s), mida
+  just see brauser saab; 90°/270° pöörde korral hoiatus madalama FPS-i kohta.
 * **RTSP server** (port 554): RTP/JPEG (RFC 2435), UDP ja TCP interleaved,
   kuni 4 klienti. Testitud VLC ja FFmpeg-iga.
 * **Veebiliides:** avalehel ainult pilt ja nupud (peata/jätka, ↺/↻ 90°,
@@ -51,7 +53,7 @@ release'ist (FOTA)**.
 5. ⚙ → **WiFi ja LTE seaded**:
    * WiFi klient – vali oma võrk („Otsi võrke"), sisesta parool;
    * Hotspot – muuda nimi ja parool;
-   * Mobiilivõrk – APN, SIM PIN, oodatav staatiline IP (valikuline), „LTE modem sees".
+   * Mobiilivõrk – APN, SIM PIN, „LTE modem sees" (operaatorilt saadud IP kuvatakse seal).
 6. Salvesta. WiFi rakendub kohe, LTE muudatused pärast taaskäivitust.
 
 ## Püsivara uuendamine (FOTA)
@@ -208,7 +210,7 @@ Allikad: [MikroTik R11e-LTE](https://mikrotik.com/product/r11e_lte),
 | `APN on seadistamata` / `PIN on seadistamata` | ⚙ → Mobiilivõrk |
 | `SIM PIN vale!` | paranda PIN seadetes (sama valet PIN-i enam ei proovita) |
 | `SIM on PUK lukus!` | ava SIM telefonis PUK-koodiga |
-| IP ≠ oodatud | APN vale või staatilise IP teenus pole SIM-ile aktiveeritud |
+| LTE IP pole see, mida ootasid | APN vale või staatilise IP teenus pole SIM-ile aktiveeritud |
 | FOTA: „GitHubiga ei saanud ühendust" | seadmel pole internetti (ainult hotspot ei piisa) |
 | Brownout LTE ühendumisel | modem tarbib kuni 2 A tippe – kasuta korralikku 5 V toidet |
 

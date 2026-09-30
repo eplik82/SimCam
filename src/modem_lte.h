@@ -33,7 +33,6 @@ enum class State : uint8_t {
 struct Status {
     State    state = State::PowerOn;
     bool     connected = false;
-    bool     ipMatchesExpected = false;
     bool     cmux = false;
     char     ip[16] = "-";
     char     op[32] = "-";           // operaator (nt "Telia EE")
