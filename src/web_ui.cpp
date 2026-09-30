@@ -452,6 +452,7 @@ static esp_err_t h_config_post(httpd_req_t *req) {
 
     Settings::Data d = Settings::get();
     const bool oldLte = d.lteEnabled;
+    const Settings::Data before = d;
     char v[70];
     if (formField(body, "sta_en", v, sizeof(v))) d.staEnabled = v[0] == '1';
     if (formField(body, "sta_ssid", v, sizeof(v))) strlcpy(d.staSsid, v, sizeof(d.staSsid));
@@ -480,9 +481,15 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     snprintf(resp, sizeof(resp), "{\"ok\":true,\"reboot\":%s,\"ap_forced\":%s}",
              reboot ? "true" : "false", apForced ? "true" : "false");
     httpd_resp_sendstr(req, resp);
-    if (autoOn) Ota::checkNow();              // automaatika sisse → kontrolli kohe
     LOGI(TAG, "Seaded muudetud veebiliidesest%s", reboot ? " (LTE muutus → vajab taaskäivitust)" : "");
-    xTaskCreate(wifiRestartTask, "wifi_rst", 4096, nullptr, 2, nullptr);
+    // WiFi taaskäivitus ainult siis, kui WiFi/hotspoti seaded tegelikult muutusid
+    // (muidu katkeks nt RTSP ja käimasolev uuenduste kontroll asjatult).
+    const Settings::Data after = Settings::get();
+    const bool wifiChanged = before.staEnabled != after.staEnabled || before.apEnabled != after.apEnabled ||
+        strcmp(before.staSsid, after.staSsid) || strcmp(before.staPass, after.staPass) ||
+        strcmp(before.apSsid, after.apSsid) || strcmp(before.apPass, after.apPass);
+    if (wifiChanged) xTaskCreate(wifiRestartTask, "wifi_rst", 4096, nullptr, 2, nullptr);
+    if (autoOn) Ota::checkNow(wifiChanged ? 8000 : 0);   // automaatika sisse → kontrolli kohe
     return ESP_OK;
 }
 

@@ -18,7 +18,7 @@
 namespace Ota {
 
 void begin();          // käivitab taustataski
-void checkNow();       // asünkroonne kontroll
+void checkNow(uint32_t delayMs = 0);   // asünkroonne kontroll (valikulise viivitusega)
 bool startUpdate();    // asünkroonne uuendamine (false, kui uuendust pole)
 String statusJson();   // olek veebiliidesele
 

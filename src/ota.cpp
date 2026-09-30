@@ -40,6 +40,7 @@ static char              s_err[96] = "";
 static uint32_t          s_size = 0;
 static uint32_t          s_lastCheck = 0;       // millis() viimasest kontrollist
 static bool              s_pendingVerify = false;
+static volatile uint32_t s_checkAt = 0;          // hilinenud kontrolli aeg (millis), 0 = pole
 static char              s_skip[24] = "";      // versioon, mis tagasi pöörati – auto ei proovi uuesti
 
 // Enne uuendamist salvestatakse proovitav versioon. Käivitusel: kui töötab
@@ -288,6 +289,7 @@ static void otaTask(void *) {
                 LOGI(TAG, "Uus püsivara %s kinnitatud (tagasipööramine tühistatud)", SIMCAM_VERSION);
         }
 
+        if (s_checkAt && (int32_t)(millis() - s_checkAt) >= 0) { s_checkAt = 0; cmd |= CMD_CHECK; }
         if (cmd & CMD_UPDATE) { doUpdate(); continue; }
         if ((cmd & CMD_CHECK) || (int32_t)(millis() - nextCheck) >= 0) {
             if (s_st != St::Updating) { doCheck(); maybeAutoUpdate(); }
@@ -313,8 +315,10 @@ void begin() {
     xTaskCreatePinnedToCore(otaTask, "ota", 10240, nullptr, 2, &s_task, 0);
 }
 
-void checkNow() {
-    if (s_task) xTaskNotify(s_task, CMD_CHECK, eSetBits);
+void checkNow(uint32_t delayMs) {
+    if (!s_task) return;
+    if (delayMs) { s_checkAt = millis() + delayMs; if (!s_checkAt) s_checkAt = 1; return; }
+    xTaskNotify(s_task, CMD_CHECK, eSetBits);
 }
 
 bool startUpdate() {
