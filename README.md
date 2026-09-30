@@ -37,8 +37,8 @@ release'ist (FOTA)**.
 * **Failsafe:** kui WiFi klient ja LTE on seadetes mõlemad väljas, jääb hotspot alati
   sisse; kui seadmel pole 2 minutit ühtegi võrguühendust, lülitub hotspot ajutiselt
   ise sisse (ja pärast ühenduse taastumist välja).
-* **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel, eelmine versioon
-  taastatakse automaatselt, kui uus ei käivitu.
+* **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel või soovi korral
+  automaatselt; eelmine versioon taastatakse, kui uus ei käivitu.
 * Kõik seaded (WiFi, hotspot, LTE, parool, pööre) salvestatakse seadme NVS-i –
   **lähtekoodis pole paroole ega operaatori andmeid**.
 
@@ -59,8 +59,13 @@ release'ist (FOTA)**.
 ## Püsivara uuendamine (FOTA)
 
 Seadmes: ⚙ → **Püsivara** → „Kontrolli uuendusi" → „Uuenda".
-Seade kontrollib ka ise iga 6 tunni järel (vajab internetti WiFi või LTE kaudu)
-ja näitab, kui uus versioon on saadaval. Paigaldamine toimub ainult nupuga.
+Seade kontrollib ka ise 1 min pärast käivitust ja siis iga 6 tunni järel (vajab
+internetti WiFi või LTE kaudu) ja näitab, kui uus versioon on saadaval.
+
+**Uuenda automaatselt** (märkeruut samal kaardil, vaikimisi väljas): leitud uus
+versioon paigaldatakse kohe ise. Kui uus versioon ei käivitu ja bootloader pöörab
+tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
+(käsitsi „Uuenda" nupuga saab ikka proovida).
 
 * Allikas: `https://api.github.com/repos/eplik82/SimCam/releases/latest`
   (muudetav failis `src/version.h`), fail `simcam-firmware.bin`.

@@ -234,6 +234,8 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0}
   <div class="row"><span>Viimane GitHubis</span><span id="o_lat">-</span></div>
   <div class="row"><span>Olek</span><span id="o_st">-</span></div>
   <div class="bar" id="o_barw" style="display:none;margin:8px 0"><div id="o_bar"></div></div>
+  <label class="chk" style="margin-top:10px"><input type="checkbox" id="f_auto"> Uuenda automaatselt</label>
+  <div class="note" id="o_autonote">Seade kontrollib uuendusi 1 min pärast käivitust ja siis iga 6 h järel ning paigaldab uue versiooni ise. Kui uus versioon ei käivitu, taastatakse eelmine ja seda versiooni automaatselt enam ei proovita.</div>
   <div class="btns" style="margin-top:10px"><button id="bOtaChk">Kontrolli uuendusi</button><button class="pri" id="bOtaUpd" disabled>Uuenda</button></div>
  </section>
 </div>
@@ -287,12 +289,16 @@ $('fSim').onsubmit=async e=>{e.preventDefault();const o=$('s_old').value.trim(),
 $('bReboot').onclick=async()=>{if(!confirm('Kas taaskäivitada seade?'))return;try{await api('/api/reboot',{method:'POST'})}catch(e){}toast('Taaskäivitan…')};
 const OST={idle:'-',checking:'Kontrollin…',uptodate:'Ajakohane ✓',available:'Uuendus saadaval!',updating:'Uuendan…',done:'Paigaldatud – taaskäivitub',error:'Viga'};
 async function otaPoll(){try{const o=await (await api('/api/ota',{cache:'no-store'})).json();
- $('o_cur').textContent=o.current;$('o_lat').textContent=o.latest||'-';
+ $('o_cur').textContent=o.current;$('o_lat').textContent=(o.latest||'-')+(o.skip&&o.skip==o.latest?' (tagasi pööratud – auto jätab vahele)':'');
+ if(document.activeElement!==$('f_auto'))$('f_auto').checked=!!o.auto;
  let st=OST[o.state]||o.state;if(o.state=='error')st+=': '+o.error;if(o.state=='updating')st+=' '+o.progress+'%';
  if(o.checked_ago&&(o.state=='uptodate'||o.state=='available'))st+=` (${Math.round(o.checked_ago/60)} min tagasi)`;
  $('o_st').textContent=st;$('bOtaUpd').disabled=o.state!='available';$('bOtaChk').disabled=o.state=='checking'||o.state=='updating';
  $('o_barw').style.display=(o.state=='updating'||o.state=='done')?'block':'none';$('o_bar').style.width=o.progress+'%';
  setTimeout(otaPoll,(o.state=='updating'||o.state=='checking')?1000:5000)}catch(e){setTimeout(otaPoll,5000)}}
+$('f_auto').onchange=async()=>{const on=$('f_auto').checked;
+ if(on&&!confirm('Lülitada sisse automaatne uuendamine? Seade paigaldab uued versioonid GitHubist ise ja taaskäivitub.')){$('f_auto').checked=false;return}
+ await save({auto_update:on?1:0},on?'Automaatne uuendamine sees – kontrollin kohe':'Automaatne uuendamine väljas');otaPoll()};
 $('bOtaChk').onclick=async()=>{try{await api('/api/ota/check',{method:'POST'});$('o_st').textContent='Kontrollin…'}catch(e){}};
 $('bOtaUpd').onclick=async()=>{if(!confirm('Paigaldada uus püsivara? Seade taaskäivitub. Kui uus versioon ei tööta, taastatakse eelmine automaatselt.'))return;
  try{const r=await api('/api/ota/update',{method:'POST'});toast(r.ok?'Uuendus alustatud':'Uuendust pole saadaval')}catch(e){}};

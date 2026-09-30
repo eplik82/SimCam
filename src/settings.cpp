@@ -28,6 +28,7 @@ static void defaults(Data &d) {
     strlcpy(d.webPass, WEB_PASS_DEFAULT, sizeof(d.webPass));
     d.authSalt[0] = 0;
     d.rtspAuth = true;
+    d.autoUpdate = false;
 }
 
 bool applyFailsafe(Data &d) {
@@ -58,6 +59,7 @@ void load() {
         if (p.isKey("apn")) p.getString("apn", d.apn, sizeof(d.apn));
         if (p.isKey("web_pass")) p.getString("web_pass", d.webPass, sizeof(d.webPass));
         d.rtspAuth = p.getBool("rtsp_auth", d.rtspAuth);
+        d.autoUpdate = p.getBool("auto_upd", d.autoUpdate);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
     }
@@ -108,6 +110,7 @@ bool save(const Data &din) {
     p.putString("web_pass", d.webPass);
     p.putString("salt", d.authSalt);
     p.putBool("rtsp_auth", d.rtspAuth);
+    p.putBool("auto_upd", d.autoUpdate);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_d = d;

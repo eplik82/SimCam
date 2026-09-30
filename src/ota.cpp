@@ -11,6 +11,8 @@
 #include "esp_ota_ops.h"
 #include "esp_heap_caps.h"
 #include "cJSON.h"
+#include "settings.h"
+#include <Preferences.h>
 
 static const char *TAG = "OTA";
 
@@ -38,6 +40,34 @@ static char              s_err[96] = "";
 static uint32_t          s_size = 0;
 static uint32_t          s_lastCheck = 0;       // millis() viimasest kontrollist
 static bool              s_pendingVerify = false;
+static char              s_skip[24] = "";      // versioon, mis tagasi pöörati – auto ei proovi uuesti
+
+// Enne uuendamist salvestatakse proovitav versioon. Käivitusel: kui töötab
+// see sama versioon → õnnestus; kui töötab midagi muud → uus pilt ei
+// käivitunud (bootloader pööras tagasi) → jäta see versioon automaatikast välja.
+static void rememberTry(const char *v) {
+    Preferences p;
+    if (p.begin("simcam", false)) { p.putString("ota_try", v); p.end(); }
+}
+
+static void resolveTry() {
+    Preferences p;
+    if (!p.begin("simcam", false)) return;
+    String tried = p.getString("ota_try", "");
+    String skip = p.getString("ota_skip", "");
+    if (tried.length()) {
+        if (tried == SIMCAM_VERSION) {
+            skip = "";                                // uus versioon käivitus
+        } else {
+            skip = tried;                             // tagasipööramine
+            LOGW(TAG, "Uuendus %s ei käivitunud (tagasi pööratud) – automaatne uuendus jätab selle vahele", tried.c_str());
+        }
+        p.remove("ota_try");
+        p.putString("ota_skip", skip);
+    }
+    strlcpy(s_skip, skip.c_str(), sizeof(s_skip));
+    p.end();
+}
 
 enum : uint32_t { CMD_CHECK = 1, CMD_UPDATE = 2 };
 
@@ -161,6 +191,19 @@ static void doCheck() {
          newer ? "UUENDUS SAADAVAL" : "ajakohane");
 }
 
+static void doUpdate();
+
+// Automaatne paigaldus pärast kontrolli (kui seadetes lubatud)
+static void maybeAutoUpdate() {
+    if (s_st != St::Available || !Settings::get().autoUpdate) return;
+    if (s_skip[0] && !strcmp(s_skip, s_latest)) {
+        LOGW(TAG, "Automaatne uuendus: %s jäeti vahele (varem tagasi pööratud)", s_latest);
+        return;
+    }
+    LOGI(TAG, "Automaatne uuendus: paigaldan %s", s_latest);
+    doUpdate();
+}
+
 // -----------------------------------------------------------------------------
 //  Uuendamine: laadi alla ja kirjuta teise OTA partitsiooni
 // -----------------------------------------------------------------------------
@@ -170,6 +213,7 @@ static void doUpdate() {
     s_progress = 0;
     s_err[0] = 0;
     LOGI(TAG, "Laen alla %s (%lu B)", s_url, (unsigned long)s_size);
+    rememberTry(s_latest);
 
     esp_http_client_config_t hc = {};
     hc.url = s_url;
@@ -246,7 +290,7 @@ static void otaTask(void *) {
 
         if (cmd & CMD_UPDATE) { doUpdate(); continue; }
         if ((cmd & CMD_CHECK) || (int32_t)(millis() - nextCheck) >= 0) {
-            if (s_st != St::Updating) doCheck();
+            if (s_st != St::Updating) { doCheck(); maybeAutoUpdate(); }
             nextCheck = millis() + OTA_CHECK_HOURS * 3600UL * 1000UL;
         }
     }
@@ -254,6 +298,7 @@ static void otaTask(void *) {
 
 void begin() {
     s_mtx = xSemaphoreCreateMutex();
+    resolveTry();
     const esp_partition_t *run = esp_ota_get_running_partition();
     esp_ota_img_states_t st;
     if (run && esp_ota_get_state_partition(run, &st) == ESP_OK) {
@@ -282,14 +327,16 @@ bool startUpdate() {
 }
 
 String statusJson() {
-    char b[400];
+    char b[480];
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     uint32_t ago = s_lastCheck ? (millis() - s_lastCheck) / 1000 : 0;
     snprintf(b, sizeof(b),
              "{\"current\":\"%s\",\"latest\":\"%s\",\"name\":\"%s\",\"state\":\"%s\","
-             "\"progress\":%d,\"size\":%lu,\"checked_ago\":%lu,\"error\":\"%s\",\"repo\":\"%s\"}",
+             "\"progress\":%d,\"size\":%lu,\"checked_ago\":%lu,\"error\":\"%s\",\"repo\":\"%s\","
+             "\"auto\":%s,\"skip\":\"%s\",\"interval_h\":%d}",
              SIMCAM_VERSION, s_latest, s_relName, stName(s_st), s_progress, (unsigned long)s_size,
-             (unsigned long)(s_lastCheck ? ago : 0), s_err, SIMCAM_GITHUB_REPO);
+             (unsigned long)(s_lastCheck ? ago : 0), s_err, SIMCAM_GITHUB_REPO,
+             Settings::get().autoUpdate ? "true" : "false", s_skip, OTA_CHECK_HOURS);
     xSemaphoreGive(s_mtx);
     return String(b);
 }

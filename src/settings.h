@@ -19,7 +19,8 @@ struct Data {
     char apn[64];             // APN, nt operaatori staatilise IP APN
     char webPass[65];         // veebiliidese + RTSP parool
     char authSalt[17];
-    bool rtspAuth;            // kas RTSP nõuab parooli        // juhuslik sool sessiooniküpsise jaoks (hex)
+    bool rtspAuth;            // kas RTSP nõuab parooli
+    bool autoUpdate;          // paigalda GitHubi uuendused automaatselt        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 
 void load();                  // loe NVS-ist (puuduvad väärtused = config.h vaikeväärtused)

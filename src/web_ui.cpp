@@ -425,11 +425,12 @@ static esp_err_t h_config_get(httpd_req_t *req) {
     int n = snprintf(buf, sizeof(buf),
         "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
-        "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s}",
+        "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s}",
         d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
         d.lteEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
-        strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false");
+        strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false",
+        d.autoUpdate ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, buf, n);
@@ -463,6 +464,8 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "sim_pin", v, sizeof(v)) && v[0]) strlcpy(d.simPin, v, sizeof(d.simPin));
     if (formField(body, "sim_pin_clear", v, sizeof(v)) && v[0] == '1') d.simPin[0] = 0;
     if (formField(body, "rtsp_auth", v, sizeof(v))) d.rtspAuth = v[0] == '1';
+    bool autoOn = false;
+    if (formField(body, "auto_update", v, sizeof(v))) { autoOn = v[0] == '1' && !d.autoUpdate; d.autoUpdate = v[0] == '1'; }
     const bool apForced = Settings::applyFailsafe(d);
     const bool modemChanged = strcmp(d.apn, Settings::get().apn) || strcmp(d.simPin, Settings::get().simPin);
 
@@ -477,6 +480,7 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     snprintf(resp, sizeof(resp), "{\"ok\":true,\"reboot\":%s,\"ap_forced\":%s}",
              reboot ? "true" : "false", apForced ? "true" : "false");
     httpd_resp_sendstr(req, resp);
+    if (autoOn) Ota::checkNow();              // automaatika sisse → kontrolli kohe
     LOGI(TAG, "Seaded muudetud veebiliidesest%s", reboot ? " (LTE muutus → vajab taaskäivitust)" : "");
     xTaskCreate(wifiRestartTask, "wifi_rst", 4096, nullptr, 2, nullptr);
     return ESP_OK;
