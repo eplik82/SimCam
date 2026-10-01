@@ -397,7 +397,7 @@ SimAudio.onstate=on=>{$('bListen').textContent=on?'⏹ Lõpeta':'🔈 Kuula'};Si
 $('bListen').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
 function showMic(m){if(!m)return;const pct=m.running?Math.max(0,Math.min(100,(m.level+70)/70*100)):0;
  $('m_lvl_b').style.width=pct+'%';$('m_lvl').classList.toggle('hot',m.peak>-3);
- $('m_chan_t').textContent=m.running?`I²S: ${m.i2s}, kasutusel ${m.used_chan?'parem':'vasak'} kanal. Signaal: vasak ${m.l_db} dBFS, parem ${m.r_db} dBFS (vaikses ruumis peaks mikrofoni kanal olema ~−60…−80 ja teine ~−120).`:'';
+ $('m_chan_t').textContent=m.running?`${m.i2s}, kasutusel ${m.used_chan?'parem':'vasak'} kanal. Signaal: vasak ${m.l_db} dBFS, parem ${m.r_db} dBFS (vaikses ruumis peaks mikrofoni kanal olema ~−60…−80 ja teine ~−120).`:'';
  $('m_lvl_t').textContent=m.running?`${m.level.toFixed(0)} dBFS (tipp ${m.peak.toFixed(0)})`:(m.enabled?'käivitub…':'-')}
 $('bReboot').onclick=async()=>{if(!confirm('Kas taaskäivitada seade?'))return;try{await api('/api/reboot',{method:'POST'})}catch(e){}toast('Taaskäivitan…')};
 const OST={idle:'-',checking:'Kontrollin…',uptodate:'Ajakohane ✓',available:'Uuendus saadaval!',updating:'Uuendan…',done:'Paigaldatud – taaskäivitub',error:'Viga'};

@@ -200,8 +200,11 @@ jaoks.
 ## Mikrofon
 
 Plaadil on digitaalne MEMS-mikrofon **MSM261S4030H0R** (skeem `T_SIMCAM-V1.3`,
-U3; I²S: SCK = GPIO41, WS = GPIO42, andmed = GPIO2, L/R = GND → vasak kanal –
-samad viigud on LilyGO tehasetarkvaras). Mikrofon on vaikimisi **väljas**:
+U3; takt = GPIO41, andmed = GPIO2, L/R = GND; GPIO42 (WS) jääb kasutamata – samad
+viigud on LilyGO tehasetarkvaras). **NB:** kuigi skeemil on I²S mikrofon, annab plaadil
+olev kiip **PDM-voo** (andmed ainult ühel taktipoolel, teisel kõrgtakistuslik). I²S
+STD režiimis loeti seepärast ainult nulle või täismahus sahinat; püsivara loeb nüüd
+ESP32-S3 riistvaralise PDM→PCM muunduriga (v1.8.5). Mikrofon on vaikimisi **väljas**:
 ⚙ → **🎤 Mikrofon** → „Mikrofon sees".
 
 | Seade | Tähendus |
@@ -218,12 +221,10 @@ samad viigud on LilyGO tehasetarkvaras). Mikrofon on vaikimisi **väljas**:
 * **RTSP:** sama URL (`rtsp://admin:<parool>@<IP>:554/live`) – VLC/ffplay mängivad
   pilti ja heli koos. Pilt ja heli seotakse ühisele ajateljele RTCP Sender Reportiga
   (iga 5 s). Aeglases võrgus jäetakse üle 0,4 s maha jäänud heli vahele.
-* Mikrofoni sisselülitamisel proovib seade ~4 s jooksul läbi I²S taktid (48/32/16 kHz →
-  BCLK 3,07/2,05/1,02 MHz) ja vormingud (Philips/MSB) ning valib selle, kus üks kanal
-  annab tüüpilist mikrofoni signaali (−100…−20 dBFS) ja teine on vaikne (andmeliinil on
-  10 kΩ maandustakisti). Tulemused on logis (`MIC`, „Proov …"); uuesti proovimiseks
-  lülita mikrofon välja ja sisse.
-* Heli töödeldakse: I²S → 16 kHz (keskmistamine), alalisvoolu eemaldus, võimendus.
+* PDM takt on 16 kHz × 128 = 2,048 MHz. PDM-i stereo kahest poolest on üks mikrofon
+  (vaikses ruumis ~−70 dBFS) ja teine konstantne (−120 dBFS); automaatrežiim valib
+  aktiivse. Käivitusel logitakse (`MIC`) mõlema kanali tase.
+* Heli töödeldakse: PDM → 16 kHz PCM (riistvaras), alalisvoolu eemaldus, võimendus.
 * Heli salvestamisel arvesta teiste inimeste privaatsusega.
 
 ## Aku
@@ -393,7 +394,7 @@ SimCam/
     ├── modem_lte.*           LTE: PWRKEY, PIN, APN, PPP/CMUX, taastamine
     ├── ota.*                 FOTA GitHubi release'ist + tagasipööramine
     ├── battery.*             aku pinge (GPIO3), täituvus, olek, ajalugu
-    ├── audio.*               mikrofon (I²S), heli ringpuhver, G.711 kodeerija
+    ├── audio.*               mikrofon (PDM), heli ringpuhver, G.711 kodeerija
     ├── settings.*            NVS seaded
     ├── auth.*                parool, sessiooniküpsis, HTTP Basic
     └── log.*                 logi: USB Serial + mälupuhver (/log) + eelmise käivituse logi (RTC)
