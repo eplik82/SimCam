@@ -49,6 +49,24 @@ bool check(const char *hdr) {
     return checkPassword(colon + 1);
 }
 
+// Basic päise kasutajanimi logimiseks (mitteprinditavad märgid → '?', piiratud pikkus)
+void basicUser(const char *hdr, char *out, size_t n) {
+    out[0] = 0;
+    while (*hdr == ' ') hdr++;
+    if (strncasecmp(hdr, "Basic ", 6) != 0) { strlcpy(out, "(mitte Basic)", n); return; }
+    hdr += 6;
+    while (*hdr == ' ') hdr++;
+    unsigned char dec[100];
+    size_t olen = 0, len = strcspn(hdr, " \r\n");
+    if (mbedtls_base64_decode(dec, sizeof(dec) - 1, &olen, (const unsigned char *)hdr, len) != 0) { strlcpy(out, "(vigane)", n); return; }
+    dec[olen] = 0;
+    char *colon = strchr((char *)dec, ':');
+    if (colon) *colon = 0;
+    size_t j = 0;
+    for (size_t i = 0; dec[i] && j + 1 < n && j < 32; i++) out[j++] = (dec[i] >= 0x20 && dec[i] < 0x7F) ? dec[i] : '?';
+    out[j] = 0;
+}
+
 String cookieValue() {
     Settings::Data d = Settings::get();
     uint8_t h[32];

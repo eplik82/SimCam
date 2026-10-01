@@ -12,6 +12,7 @@ namespace Auth {
 bool enabled();                                // kas parool on määratud
 bool checkPassword(const char *pass);          // ajakindel võrdlus
 bool check(const char *authorizationHeader);   // HTTP Basic päis
+void basicUser(const char *hdr, char *out, size_t n);   // Basic päise kasutajanimi (logi jaoks)
 bool checkCookie(const char *cookieHeader);    // "Cookie:" päise väärtus
 String cookieValue();                          // kehtiv sessioonitunnus
 bool setPassword(const char *newPass);         // salvestab NVS-i (min 4 märki)

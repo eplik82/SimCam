@@ -374,6 +374,18 @@ static bool handleRequest(Session &s, char *req) {
         char auth[128] = "";
         header(req, "Authorization", auth, sizeof(auth));
         if (!Auth::check(auth)) {
+            // Vale parool → selge hoiatus logis (VMS proovib iga sekund – kuni kord minutis)
+            static uint32_t lastWarn = 0;
+            if (auth[0] && (!lastWarn || millis() - lastWarn > 60000)) {
+                lastWarn = millis();
+                char user[48] = "?";
+                Auth::basicUser(auth, user, sizeof(user));
+                char ip[16];
+                inet_ntoa_r(s.peer.sin_addr, ip, sizeof(ip));
+                LOGW(TAG, "Vale RTSP kasutaja/parool kliendilt %s (kasutaja '%s') – kontrolli kaamera seadeid "
+                          "salvestis/VMS-is: aadress rtsp://<IP>:554/live, kasutaja admin, parool = veebiliidese parool",
+                     ip, user);
+            }
             reply(s, 401, "Unauthorized", cseq, "WWW-Authenticate: Basic realm=\"SimCam\"\r\n");
             return true;
         }

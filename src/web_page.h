@@ -346,8 +346,9 @@ details summary{margin-top:10px}
  </details></section>
 
  <section class="card grp" data-g="stream"><details open><summary><h2>📡 Voogedastus</h2></summary>
-  <div class="note">RTSP aadress (VLC: Meedia → Ava võrguvoog):</div>
-  <div class="url"><code id="rtsp">-</code><button type="button" id="bCopy" title="Kopeeri">⧉</button></div>
+  <div class="url"><code id="rtsp">-</code><button type="button" id="bCopy" title="Kopeeri aadress">⧉</button></div>
+  <div class="row" id="rtspCred"><span>Kasutaja / parool</span><span><b>admin</b> / veebiliidese parool</span></div>
+  <div class="note">Salvestis/VMS (Synology Surveillance Station, Milestone, Blue Iris …): kaamera tüüp „RTSP" / „Generic", aadressiks ülal olev rida, kasutaja ja parool eraldi väljadele. Video: MJPEG, heli G.711. VLC: Meedia → Ava võrguvoog.</div>
   <form id="fStream" autocomplete="off">
    <label class="chk"><input type="checkbox" id="f_rtsp_auth"> RTSP nõuab parooli</label>
    <hr>
@@ -429,7 +430,7 @@ async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-s
  $('f_mic_en').checked=c.mic_en;$('f_mic_gain').value=c.mic_gain;$('m_gain_t').textContent=c.mic_gain+' dB';
  $('f_mic_codec').value=c.mic_codec;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
  $('defpass').style.display=c.default_pass?'block':'none'}catch(e){}}
-function showRtsp(){$('rtsp').textContent=rtspAuth?`rtsp://admin:<parool>@${location.hostname}:554/live`:`rtsp://${location.hostname}:554/live`}
+function showRtsp(){$('rtsp').textContent=`rtsp://${location.hostname}:554/live`;$('rtspCred').style.display=rtspAuth?'':'none'}
 $('bCopy').onclick=()=>{const t=$('rtsp').textContent;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Kopeeritud'),()=>toast(t))};
 async function save(fields,msg){
  try{const d=await (await api('/api/config',form(fields))).json();
