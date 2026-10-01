@@ -31,9 +31,14 @@ release'ist (FOTA)**.
   just see brauser saab. Telefon horisontaalis → pilt üle kogu ekraani, info ja nupud
   jäävad poolläbipaistvalt pildi peale (brauseri täisekraan lülitub sisse pööramisel
   või esimesel puudutusel; iPhone'i Safari peidab ainult lehe enda ääred).
-* **Kaamera nimi** (⚙ → 📷 Pilt, kuni 40 märki, täpitähed lubatud): pealehe ülaservas,
+* **Kaamera nimi** (⚙ → 📷 Kaamera, kuni 40 märki, täpitähed lubatud): pealehe ülaservas,
   brauseri vahekaardil, sisselogimise, logi ja seadete lehe päises ning RTSP voo nimena
   (SDP `s=`). Tühi nimi = „SimCam".
+* **Seadete leht (v1.10.0):** olek (Kaamera, Võrk, Aku, Süsteem) ja 5 rühma –
+  📷 Kaamera, 🌐 Võrk (vahelehed WiFi / Hotspot / LTE, SIM PIN-i muutmine LTE all
+  „Täpsemalt"), 📡 Voogedastus (RTSP + push), 🎤 Heli, 🔒 Turvalisus ja püsivara. Iga
+  rühm on kokkuvolditav (telefonis vaikimisi avatud Kaamera ja Võrk; valik jääb
+  brauserisse meelde), igal rühmal üks „Salvesta".
 * **Aku säästmine:** kui keegi pilti ei vaata (veeb, RTSP, hetktõmmis), läheb kaamera
   15 s pärast ooterežiimi (OV5640 tarkvaraline standby) ja mikrofon peatub 10 s
   pärast. Uus vaataja äratab mõlemad – esimene kaader ~2 s.
@@ -173,7 +178,7 @@ Seade saadab voo ise RTSP serverisse (`ANNOUNCE` → `SETUP` → `RECORD`, kõik
 TCP ühenduse). Sobib mobiilivõrku, kus seadmele väljast ligi ei pääse (CGNAT):
 vaatajad ühenduvad serveriga, mitte seadmega. Ühtlasi talub server palju vaatajaid.
 
-⚙ → **📡 RTSP push**: „Push sees", serveri aadress `rtsp://server:8554/tee`,
+⚙ → **📡 Voogedastus** → „RTSP push serverisse", serveri aadress `rtsp://server:8554/tee`,
 kasutaja ja parool (Basic või Digest – vastavalt serverile). Olek, fps, kB/s ja
 viimane viga on samal kaardil. Katkestuse korral uus katse 5 s … 60 s pärast.
 
@@ -220,7 +225,7 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
 
 ## Autofookus
 
-OV5640 AF püsivara (0015/ESP32-OV5640-AF) laetakse käivitusel. Režiim: ⚙ → **📷 Pilt → Fookus**
+OV5640 AF püsivara (0015/ESP32-OV5640-AF) laetakse käivitusel. Režiim: ⚙ → **📷 Kaamera → Fookus**
 (salvestatakse NVS-i):
 
 | Režiim | Kirjeldus |
@@ -240,10 +245,10 @@ Diagnostika: `/api/cam?reg=0x3029` (AF olek), `/api/cam?wreg=<reg>&val=<v>` (kir
 ## Pööramine ja kaamera juhtimine
 
 **Peegeldus (v1.9.2):** T-SIMCAM OV5640 annab ilma parandita peegelpildi (tekst tagurpidi),
-seepärast on sensori `hmirror` vaikimisi sees. ⚙ → **📷 Pilt → „Peegelda pilt"** lülitab
+seepärast on sensori `hmirror` vaikimisi sees. ⚙ → **📷 Kaamera → „Peegelda pilt"** lülitab
 selle; valik salvestatakse NVS-i ja kehtib ka RTSP-s ja 180° pöörde korral.
 
-**Resolutsioon:** ⚙ → **📷 Pilt** → QVGA 320×240, VGA 640×480, **SVGA 800×600**
+**Resolutsioon:** ⚙ → **📷 Kaamera** → QVGA 320×240, VGA 640×480, **SVGA 800×600**
 (vaikimisi), XGA 1024×768, HD 1280×720, SXGA 1280×1024, UXGA 1600×1200 või
 Full HD 1920×1080 (OV2640 puhul kuni UXGA). Valik rakendub kohe ja salvestub.
 Suurem resolutsioon = väiksem kaadrisagedus ja suurem andmemaht – LTE-s soovitame
@@ -265,7 +270,7 @@ viigud on LilyGO tehasetarkvaras). **NB:** kuigi skeemil on I²S mikrofon, annab
 olev kiip **PDM-voo** (andmed ainult ühel taktipoolel, teisel kõrgtakistuslik). I²S
 STD režiimis loeti seepärast ainult nulle või täismahus sahinat; püsivara loeb nüüd
 ESP32-S3 riistvaralise PDM→PCM muunduriga (v1.8.5). Mikrofon on vaikimisi **väljas**:
-⚙ → **🎤 Mikrofon** → „Mikrofon sees".
+⚙ → **🎤 Heli** → „Mikrofon sees".
 
 | Seade | Tähendus |
 |---|---|

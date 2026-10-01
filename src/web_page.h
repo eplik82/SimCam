@@ -211,6 +211,21 @@ select.sel{width:100%;min-width:0;max-width:100%;font:inherit;font-size:15px;pad
 .lvl{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.lvl>div{height:100%;width:0;background:var(--ok);transition:width .2s}
 .lvl.hot>div{background:var(--bad)}
 details form{margin-top:8px}
+.grid{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.grp>details>summary{list-style:none;cursor:pointer;margin:0;color:var(--fg);font-size:inherit}
+.grp>details>summary::-webkit-details-marker{display:none}
+.grp>details>summary h2{margin:0}
+.grp>details>summary h2::after{content:"▾";margin-left:auto;color:var(--mut);font-size:13px;transition:transform .2s}
+.grp>details:not([open])>summary h2::after{transform:rotate(-90deg)}
+.grp>details[open]>summary{margin-bottom:10px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.tabs{display:flex;gap:4px;background:var(--bg);border-radius:10px;padding:3px;margin-bottom:10px}
+.tabs button{flex:1;justify-content:center;border:0;background:transparent;padding:7px 8px;font-size:14px}
+.tabs button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.15);font-weight:600}
+.tab{display:grid;gap:10px}
+.tab[hidden],details[hidden]{display:none}
+small.mut{color:var(--mut);font-size:12px}
+details summary{margin-top:10px}
 </style></head><body>
 <header><a class="btn" href="/">← Vaade</a><h1>{{NAME}} – seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
 <main>
@@ -240,8 +255,10 @@ details form{margin-top:8px}
    <div class="row"><span>Pinge muutus (10 min)</span><span id="b_sl">-</span></div>
    <div class="row"><span>Hinnanguline tööaeg</span><span id="b_left">-</span></div>
    <div class="row"><span>USB arvutiga</span><span id="b_usb">-</span></div>
-   <div class="chart" id="b_chart"><svg id="b_svg" role="img" aria-label="Aku pinge ajalugu"></svg><span class="tip" id="b_tip"></span></div>
-   <div class="rng" id="b_rng"><button data-h="1">1 h</button><button data-h="6">6 h</button><button data-h="24" class="on">24 h</button></div>
+   <details id="b_graph"><summary>Pinge graafik</summary>
+    <div class="chart" id="b_chart"><svg id="b_svg" role="img" aria-label="Aku pinge ajalugu"></svg><span class="tip" id="b_tip"></span></div>
+    <div class="rng" id="b_rng"><button data-h="1">1 h</button><button data-h="6">6 h</button><button data-h="24" class="on">24 h</button></div>
+   </details>
   </div>
   <div class="note" id="batOff" style="display:none">Aku jälgimine on välja lülitatud.</div>
   <details><summary>Aku seaded ja kalibreerimine</summary>
@@ -267,136 +284,123 @@ details form{margin-top:8px}
 
 <h3>Seaded</h3>
 <div class="cols">
- <section class="card"><h2>📷 Pilt</h2>
-  <form id="fName" style="margin-bottom:14px">
-   <label>Kaamera nimi
-    <span class="inl"><input type="text" id="f_cam_name" maxlength="40" placeholder="nt Garaaž, Suvila õu"><button class="pri" type="submit">Salvesta</button></span></label>
-   <div class="note">Näidatakse pealehe ülaservas, brauseri vahelehel, sisselogimise ja logi lehel ning RTSP voo nimena.</div>
+ <section class="card grp" data-g="cam"><details open><summary><h2>📷 Kaamera</h2></summary>
+  <form id="fCamAll" autocomplete="off">
+   <div class="two">
+    <label>Kaamera nimi<input type="text" id="f_cam_name" maxlength="40" placeholder="nt Garaaž, Suvila õu"></label>
+    <label>Resolutsioon<select class="sel" id="f_fs"></select></label>
+   </div>
+   <div class="note">Nimi on pealehe ülaservas, vahelehel, sisselogimisel, logis ja RTSP voo nimena. Mobiilivõrgus (LTE) soovitame resolutsiooni SVGA 800×600 või väiksemat.</div>
+   <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
   <hr>
-  <form id="fCam" style="margin-top:10px">
-   <label>Resolutsioon
-    <select class="sel" id="f_fs"></select></label>
-   <div class="note" id="fsNote">Suurem resolutsioon = detailsem pilt, kuid väiksem kaadrisagedus ja suurem andmemaht. Mobiilivõrgus (LTE) soovitame SVGA 800×600 või väiksemat.</div>
-   <div class="btns"><button class="pri" type="submit">Rakenda</button></div>
-  </form>
-  <label class="chk" style="margin-top:12px"><input type="checkbox" id="f_mirror"> Peegelda pilt (vasak ↔ parem)</label>
-  <div class="note">Kui tekst on pildil tagurpidi, muuda seda. Rakendub kohe, ka RTSP-s.</div>
-  <div id="afBox" style="display:none;margin-top:14px">
-   <hr>
-   <label style="margin-top:10px">Fookus
+  <label class="chk" style="margin-top:6px"><input type="checkbox" id="f_mirror"> Peegelda pilt (vasak ↔ parem) <small class="mut">– rakendub kohe</small></label>
+  <details id="afBox" style="display:none"><summary>Fookus · <span id="af_st">-</span></summary>
+   <label style="margin-top:8px">Režiim
     <select class="sel" id="f_af_mode"><option value="0">Ühekordne (soovitatav)</option><option value="1">Pidev</option><option value="2">Käsitsi</option></select></label>
-   <div class="note">Ühekordne: teravustab käivitusel ja „Fookus" nupuga, siis lääts jääb paigale. Pidev: teravustab ise ümber, kui pilt muutub (võib „hüpata"). Käsitsi: läätse asend liuguriga.</div>
-   <div id="afMan" style="display:none;margin-top:8px">
+   <div class="note">Ühekordne: teravustab käivitusel ja „Fookus" nupuga, siis lääts jääb paigale. Pidev: teravustab ise ümber (võib „hüpata"). Käsitsi: liugur ka pealehel.</div>
+   <div id="afMan" style="display:none;margin-top:6px">
     <div class="row"><span>Läätse asend</span><span id="af_pos_t">-</span></div>
     <input type="range" id="f_af_pos" min="0" max="1023" step="1" aria-label="Läätse asend">
-    <div class="note">← kaugele (lõpmatus) · lähedale →. „Fookus" nupp leiab teravaima asendi ja salvestab selle.</div>
+    <div class="note">← kaugele · lähedale →</div>
    </div>
-   <div class="row" style="margin-top:6px"><span>Olek</span><span id="af_st">-</span></div>
    <div class="btns" style="margin-top:6px"><button type="button" id="bAfNow">◎ Fokusseeri</button></div>
-  </div>
- </section>
+  </details>
+ </details></section>
 
- <section class="card"><h2>WiFi võrk</h2>
-  <form id="fWifi" autocomplete="off">
-   <label class="chk"><input type="checkbox" id="f_sta_en"> Ühendu WiFi võrku</label>
-   <label>Võrgu nimi (SSID)<span class="inl"><input type="text" id="f_sta_ssid" maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="button" id="bScan">Otsi võrke</button></span></label>
-   <div class="nets" id="ssids"></div>
-   <label>Parool<input type="password" id="f_sta_pass" maxlength="64" placeholder="(muutmata)"></label>
+ <section class="card grp" data-g="net"><details open><summary><h2>🌐 Võrk</h2></summary>
+  <div class="tabs" role="tablist"><button type="button" class="on" data-t="tWifi">WiFi</button><button type="button" data-t="tAp">Hotspot</button><button type="button" data-t="tLte">LTE</button></div>
+  <form id="fNet" autocomplete="off">
+   <div class="tab" id="tWifi">
+    <label class="chk"><input type="checkbox" id="f_sta_en"> Ühendu WiFi võrku</label>
+    <label>Võrgu nimi (SSID)<span class="inl"><input type="text" id="f_sta_ssid" maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="button" id="bScan">Otsi võrke</button></span></label>
+    <div class="nets" id="ssids"></div>
+    <label>Parool<input type="password" id="f_sta_pass" maxlength="64" placeholder="(muutmata)"></label>
+   </div>
+   <div class="tab" id="tAp" hidden>
+    <label class="chk"><input type="checkbox" id="f_ap_en"> Hotspot sees</label>
+    <div class="two"><label>Nimi<input type="text" id="f_ap_ssid" maxlength="32"></label>
+     <label>Parool (min 8)<input type="password" id="f_ap_pass" maxlength="64" placeholder="(muutmata)"></label></div>
+    <div class="note">Kui WiFi ja LTE on mõlemad väljas, jääb hotspot alati sisse. Kui võrguühendus kaob 2 minutiks, lülitub hotspot ajutiselt ise sisse.</div>
+   </div>
+   <div class="tab" id="tLte" hidden>
+    <label class="chk"><input type="checkbox" id="f_lte_en"> LTE modem sees</label>
+    <div class="two"><label>APN<input type="text" id="f_apn" maxlength="63" placeholder="operaatori APN"></label>
+     <label>SIM PIN<input type="password" id="f_pin" maxlength="8" inputmode="numeric" placeholder="(muutmata)"></label></div>
+    <label class="chk"><input type="checkbox" id="f_pin_clear"> SIM-il pole PIN-i</label>
+    <div class="ipbox" id="lteIp">Mobiilivõrgu IP: –</div>
+    <div class="note">Ainult UART-modemiga (LilyGO T-PCIe SIM7600). MikroTik R11e-LTE puhul hoia väljas! LTE muudatused rakenduvad pärast taaskäivitust.</div>
+   </div>
    <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
- </section>
+  <details id="simBox" hidden><summary>Täpsemalt: muuda SIM-kaardi PIN-i</summary>
+   <form id="fSim" autocomplete="off">
+    <div class="note">Muudab PIN-koodi SIM-kaardil endal (modem peab olema võrku ühendatud). Uus PIN salvestatakse ka seadmesse.</div>
+    <label>Praegune PIN<input type="password" id="s_old" maxlength="8" inputmode="numeric"></label>
+    <div class="two"><label>Uus PIN (4–8 numbrit)<input type="password" id="s_new" maxlength="8" inputmode="numeric"></label>
+     <label>Korda uut PIN-i<input type="password" id="s_new2" maxlength="8" inputmode="numeric"></label></div>
+    <div class="warn">3 valet katset lukustab SIM-i (vaja PUK-koodi).</div>
+    <div class="btns"><button type="submit">Muuda SIM PIN</button></div>
+   </form>
+  </details>
+ </details></section>
 
- <section class="card"><h2>Hotspot</h2>
-  <form id="fAp" autocomplete="off">
-   <label class="chk"><input type="checkbox" id="f_ap_en"> Hotspot sees</label>
-   <label>Nimi<input type="text" id="f_ap_ssid" maxlength="32"></label>
-   <label>Parool (min 8 märki)<input type="password" id="f_ap_pass" maxlength="64" placeholder="(muutmata)"></label>
-   <div class="note">Kui WiFi ja LTE on mõlemad väljas, jääb hotspot alati sisse. Kui võrguühendus kaob 2 minutiks, lülitub hotspot ajutiselt ise sisse.</div>
-   <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
-  </form>
- </section>
-
- <section class="card"><h2>📡 RTSP push (serverisse)</h2>
-  <div class="note">Seade saadab voo ise sinu serverisse (nt <b>MediaMTX</b>) – töötab ka mobiilivõrgus, kus seadmele väljast ligi ei pääse. Vaatajad ühenduvad serveriga.</div>
-  <form id="fPush" autocomplete="off" style="margin-top:8px">
-   <label class="chk"><input type="checkbox" id="f_push_en"> Push sees</label>
-   <label>Serveri aadress<input type="text" id="f_push_url" maxlength="159" placeholder="rtsp://server.ee:8554/simcam" autocapitalize="off" spellcheck="false"></label>
-   <div class="inl"><label style="flex:1">Kasutaja<input type="text" id="f_push_user" maxlength="47" autocomplete="off" autocapitalize="off"></label>
-    <label style="flex:1">Parool<input type="password" id="f_push_pass" maxlength="63" autocomplete="new-password"></label></div>
-   <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
-  </form>
-  <div class="row" style="margin-top:6px"><span>Olek</span><span id="push_st">-</span></div>
-  <div class="row"><span>Voog</span><span id="push_rate">-</span></div>
-  <div class="note" id="push_err"></div>
-  <div class="note">NB: push hoiab kaamera ja mikrofoni pidevalt töös (aku säästurežiim ei rakendu).</div>
- </section>
-
- <section class="card"><h2>RTSP ja parool</h2>
+ <section class="card grp" data-g="stream"><details open><summary><h2>📡 Voogedastus</h2></summary>
   <div class="note">RTSP aadress (VLC: Meedia → Ava võrguvoog):</div>
   <div class="url"><code id="rtsp">-</code><button type="button" id="bCopy" title="Kopeeri">⧉</button></div>
-  <form id="fRtsp">
+  <form id="fStream" autocomplete="off">
    <label class="chk"><input type="checkbox" id="f_rtsp_auth"> RTSP nõuab parooli</label>
+   <hr>
+   <label class="chk"><input type="checkbox" id="f_push_en"> RTSP push serverisse <small class="mut">(nt MediaMTX)</small></label>
+   <div id="pushBox">
+    <div class="note">Seade saadab voo ise serverisse – töötab ka mobiilivõrgus, kus seadmele väljast ligi ei pääse. NB: push hoiab kaamera ja mikrofoni pidevalt töös.</div>
+    <label>Serveri aadress<input type="text" id="f_push_url" maxlength="159" placeholder="rtsp://server.ee:8554/simcam" autocapitalize="off" spellcheck="false"></label>
+    <div class="two"><label>Kasutaja<input type="text" id="f_push_user" maxlength="47" autocomplete="off" autocapitalize="off"></label>
+     <label>Parool<input type="password" id="f_push_pass" maxlength="63" autocomplete="new-password"></label></div>
+    <div class="row"><span>Olek</span><span id="push_st">-</span></div>
+    <div class="row"><span>Voog</span><span id="push_rate">-</span></div>
+    <div class="note" id="push_err"></div>
+   </div>
    <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
-  <hr>
-  <div class="warn" id="defpass" style="display:none">⚠ Kasutusel on vaikeparool – muuda see!</div>
-  <form id="fPw" autocomplete="off">
-   <label>Uus parool (veeb + RTSP, min 4 märki)<input type="password" id="p1" maxlength="64" autocomplete="new-password"></label>
-   <label>Korda uut parooli<input type="password" id="p2" maxlength="64" autocomplete="new-password"></label>
-   <div class="btns"><button class="pri" type="submit">Muuda parool</button></div>
-  </form>
- </section>
+ </details></section>
 
- <section class="card"><h2>Mobiilivõrk (LTE)</h2>
-  <form id="fLte" autocomplete="off">
-   <label class="chk"><input type="checkbox" id="f_lte_en"> LTE modem sees</label>
-   <label>APN<input type="text" id="f_apn" maxlength="63" placeholder="nt operaatori staatilise IP APN"></label>
-   <label>SIM PIN, mida seade kasutab<input type="password" id="f_pin" maxlength="8" inputmode="numeric" placeholder="(muutmata)"></label>
-   <label class="chk"><input type="checkbox" id="f_pin_clear"> SIM-il pole PIN-i</label>
-   <div class="ipbox" id="lteIp">Mobiilivõrgu IP: –</div>
-   <div class="note">Ainult UART-modemiga (LilyGO T-PCIe SIM7600). MikroTik R11e-LTE puhul hoia väljas! Muudatused rakenduvad pärast taaskäivitust.</div>
-   <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
-  </form>
- </section>
-
- <section class="card"><h2>SIM-kaardi PIN-i muutmine</h2>
-  <form id="fSim" autocomplete="off">
-   <div class="note">Muudab PIN-koodi SIM-kaardil endal (modem peab olema võrku ühendatud). Uus PIN salvestatakse ka seadmesse.</div>
-   <label>Praegune PIN<input type="password" id="s_old" maxlength="8" inputmode="numeric"></label>
-   <label>Uus PIN (4–8 numbrit)<input type="password" id="s_new" maxlength="8" inputmode="numeric"></label>
-   <label>Korda uut PIN-i<input type="password" id="s_new2" maxlength="8" inputmode="numeric"></label>
-   <div class="warn">3 valet katset lukustab SIM-i (vaja PUK-koodi).</div>
-   <div class="btns"><button class="pri" type="submit">Muuda SIM PIN</button></div>
-  </form>
- </section>
-
- <section class="card"><h2>🎤 Mikrofon</h2>
+ <section class="card grp" data-g="mic"><details open><summary><h2>🎤 Heli</h2></summary>
   <form id="fMic">
-   <label class="chk"><input type="checkbox" id="f_mic_en"> Mikrofon sees</label>
+   <label class="chk"><input type="checkbox" id="f_mic_en"> Mikrofon sees <small class="mut">– rakendub kohe</small></label>
    <div id="micOn">
     <div class="row"><span>Helitase</span><span id="m_lvl_t">-</span></div>
     <div class="lvl" id="m_lvl"><div id="m_lvl_b"></div></div>
     <div class="row" style="margin-top:6px"><span>Võimendus</span><span id="m_gain_t">24 dB</span></div>
     <input type="range" id="f_mic_gain" min="0" max="40" step="2" value="24" aria-label="Võimendus">
-    <label style="margin-top:8px">Helikvaliteet
-     <select class="sel" id="f_mic_codec"><option value="0">G.711 8 kHz, 64 kbit/s (soovitatav)</option><option value="1">L16 16 kHz, 256 kbit/s (selgem)</option></select></label>
-    <label class="chk" style="margin-top:8px"><input type="checkbox" id="f_rtsp_audio"> Heli RTSP voos</label>
+    <details><summary>Täpsemalt</summary>
+     <label style="margin-top:8px">Helikvaliteet
+      <select class="sel" id="f_mic_codec"><option value="0">G.711 8 kHz, 64 kbit/s (soovitatav)</option><option value="1">L16 16 kHz, 256 kbit/s (selgem)</option></select></label>
+     <label class="chk" style="margin-top:8px"><input type="checkbox" id="f_rtsp_audio"> Heli RTSP voos</label>
+     <div class="note">Kodeki muutus rakendub uutele RTSP ühendustele.</div>
+    </details>
     <div class="btns" style="margin-top:8px"><button type="button" id="bListen">🔈 Kuula</button><button class="pri" type="submit">Salvesta</button></div>
    </div>
-   <div class="note">Mikrofon on vaikimisi väljas. Aku säästmiseks töötavad kaamera ja mikrofon ainult siis, kui pilti vaadatakse (või „Kuula" ajal). Heli salvestamisel arvesta teiste inimeste privaatsusega. Kodeki muutus rakendub uutele RTSP ühendustele.</div>
+   <div class="note">Mikrofon on vaikimisi väljas ja töötab ainult pildi vaatamise või „Kuula" ajal. Arvesta teiste inimeste privaatsusega.</div>
   </form>
- </section>
+ </details></section>
 
- <section class="card"><h2>Püsivara</h2>
-  <div class="row"><span>Praegune</span><span id="o_cur">-</span></div>
+ <section class="card grp" data-g="sys"><details open><summary><h2>🔒 Turvalisus ja püsivara</h2></summary>
+  <div class="warn" id="defpass" style="display:none">⚠ Kasutusel on vaikeparool – muuda see!</div>
+  <form id="fPw" autocomplete="off">
+   <div class="two"><label>Uus parool (veeb + RTSP, min 4)<input type="password" id="p1" maxlength="64" autocomplete="new-password"></label>
+    <label>Korda uut parooli<input type="password" id="p2" maxlength="64" autocomplete="new-password"></label></div>
+   <div class="btns"><button type="submit">Muuda parool</button></div>
+  </form>
+  <hr>
+  <div class="row"><span>Püsivara</span><span id="o_cur">-</span></div>
   <div class="row"><span>Viimane GitHubis</span><span id="o_lat">-</span></div>
   <div class="row"><span>Olek</span><span id="o_st">-</span></div>
   <div class="bar" id="o_barw" style="display:none;margin:8px 0"><div id="o_bar"></div></div>
-  <label class="chk" style="margin-top:10px"><input type="checkbox" id="f_auto"> Uuenda automaatselt</label>
-  <div class="note" id="o_autonote">Seade kontrollib uuendusi 1 min pärast käivitust ja siis iga 6 h järel ning paigaldab uue versiooni ise. Kui uus versioon ei käivitu, taastatakse eelmine ja seda versiooni automaatselt enam ei proovita.</div>
-  <div class="btns" style="margin-top:10px"><button id="bOtaChk">Kontrolli uuendusi</button><button class="pri" id="bOtaUpd" disabled>Uuenda</button></div>
- </section>
+  <label class="chk" style="margin-top:8px"><input type="checkbox" id="f_auto"> Uuenda automaatselt</label>
+  <div class="note" id="o_autonote">Kontroll 1 min pärast käivitust ja iga 6 h järel; uus versioon paigaldatakse ise. Kui see ei käivitu, taastatakse eelmine ja seda versiooni enam ei proovita.</div>
+  <div class="btns" style="margin-top:8px"><button id="bOtaChk">Kontrolli uuendusi</button><button class="pri" id="bOtaUpd" disabled>Uuenda</button></div>
+ </details></section>
 </div>
 </main>
 <div class="toast" id="toast"></div>
@@ -414,12 +418,13 @@ let rtspAuth=true;
 async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-store'})).json();
  if(document.activeElement!==$('f_cam_name'))$('f_cam_name').value=c.cam_name||'';
  $('f_push_en').checked=c.push_en;$('f_push_url').value=c.push_url||'';$('f_push_user').value=c.push_user||'';
- $('f_push_pass').value='';$('f_push_pass').placeholder=c.push_has_pass?'(muutmata)':'(puudub)';
+ $('f_push_pass').value='';$('f_push_pass').placeholder=c.push_has_pass?'(muutmata)':'(puudub)';pushVis();
  $('f_sta_en').checked=c.sta_en;$('f_sta_ssid').value=c.sta_ssid;$('f_sta_pass').placeholder=c.sta_has_pass?'(muutmata)':'(avatud võrk)';
  $('f_ap_en').checked=c.ap_en;$('f_ap_ssid').value=c.ap_ssid;
  $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;
  $('f_pin').placeholder=c.has_pin?'(salvestatud)':'(puudub)';$('f_pin_clear').checked=false;
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
+ curFs=String(c.framesize);
  if(c.framesizes){const sel=$('f_fs');sel.innerHTML=c.framesizes.map(f=>`<option value="${f.v}">${f.name} – ${f.w}×${f.h}${f.v==c.framesize?' (praegu)':''}</option>`).join('');sel.value=c.framesize}
  $('f_mic_en').checked=c.mic_en;$('f_mic_gain').value=c.mic_gain;$('m_gain_t').textContent=c.mic_gain+' dB';
  $('f_mic_codec').value=c.mic_codec;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
@@ -443,13 +448,17 @@ $('bScan').onclick=async()=>{const b=$('bScan'),box=$('ssids');b.disabled=true;b
   box.classList.toggle('show',nets.length>0);toast(nets.length?nets.length+' võrku leitud – vali loendist':'Ühtegi võrku ei leitud')}
  catch(e){if(e!==0)toast('Otsing ebaõnnestus')}
  b.disabled=false;b.textContent='Otsi võrke'};
-$('fWifi').onsubmit=e=>{e.preventDefault();save({sta_en:$('f_sta_en').checked?1:0,sta_ssid:$('f_sta_ssid').value,sta_pass:$('f_sta_pass').value},'WiFi salvestatud').then(o=>{if(o)$('f_sta_pass').value=''})};
-$('fAp').onsubmit=e=>{e.preventDefault();const p=$('f_ap_pass').value;if(p&&p.length<8){toast('Parool peab olema vähemalt 8 märki');return}
- save({ap_en:$('f_ap_en').checked?1:0,ap_ssid:$('f_ap_ssid').value,ap_pass:p},'Hotspot salvestatud').then(o=>{if(o)$('f_ap_pass').value=''})};
-$('fRtsp').onsubmit=e=>{e.preventDefault();save({rtsp_auth:$('f_rtsp_auth').checked?1:0},'RTSP seade salvestatud')};
-$('fLte').onsubmit=e=>{e.preventDefault();const pin=$('f_pin').value.trim();
- if(pin&&!/^[0-9]{4,8}$/.test(pin)){toast('PIN peab olema 4–8 numbrit');return}
- save({lte_en:$('f_lte_en').checked?1:0,apn:$('f_apn').value.trim(),sim_pin:pin,sim_pin_clear:$('f_pin_clear').checked?1:0},'LTE seaded salvestatud').then(o=>{if(o)$('f_pin').value=''})};
+// Võrk: WiFi + hotspot + LTE ühe salvestusega (tühi parool/PIN = muutmata)
+$('fNet').onsubmit=e=>{e.preventDefault();const ap=$('f_ap_pass').value,pin=$('f_pin').value.trim();
+ if(ap&&ap.length<8){showTab('tAp');toast('Hotspoti parool peab olema vähemalt 8 märki');return}
+ if(pin&&!/^[0-9]{4,8}$/.test(pin)){showTab('tLte');toast('PIN peab olema 4–8 numbrit');return}
+ save({sta_en:$('f_sta_en').checked?1:0,sta_ssid:$('f_sta_ssid').value,sta_pass:$('f_sta_pass').value,
+  ap_en:$('f_ap_en').checked?1:0,ap_ssid:$('f_ap_ssid').value,ap_pass:ap,
+  lte_en:$('f_lte_en').checked?1:0,apn:$('f_apn').value.trim(),sim_pin:pin,sim_pin_clear:$('f_pin_clear').checked?1:0},
+  'Võrgu seaded salvestatud').then(o=>{if(o)['f_sta_pass','f_ap_pass','f_pin'].forEach(i=>$(i).value='')})};
+function showTab(id){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t==id));
+ document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!=id);$('simBox').hidden=id!='tLte'}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.t));
 $('fPw').onsubmit=async e=>{e.preventDefault();const a=$('p1').value,b=$('p2').value;
  if(a.length<4){toast('Parool peab olema vähemalt 4 märki');return}if(a!==b){toast('Paroolid ei kattu');return}
  try{const r=await api('/api/password',form({pass:a}));toast(r.ok?'Parool muudetud':'Parooli muutmine ebaõnnestus');if(r.ok){$('p1').value='';$('p2').value='';loadCfg()}}catch(e){}};
@@ -481,14 +490,26 @@ function showPush(p){if(!p)return;const up=p.up_s,h=Math.floor(up/3600),m=Math.f
  $('push_st').style.color=p.state=='streaming'?'var(--ok)':p.state=='retry'||p.state=='error'?'var(--warn)':'';
  $('push_rate').textContent=p.state=='streaming'?`${p.fps.toFixed(1)} fps · ${p.kBps.toFixed(0)} kB/s · kokku ${p.sent_mb.toFixed(1)} MB`:'-';
  $('push_err').textContent=p.error&&p.state!='streaming'?'⚠ '+p.error:''}
-$('fPush').onsubmit=e=>{e.preventDefault();const u=$('f_push_url').value.trim();
+// Voogedastus: RTSP parool + push ühe salvestusega
+const pushVis=()=>$('pushBox').style.display=$('f_push_en').checked?'':'none';
+$('f_push_en').onchange=pushVis;
+$('fStream').onsubmit=e=>{e.preventDefault();const u=$('f_push_url').value.trim(),on=$('f_push_en').checked;
+ if(on&&!u){toast('Sisesta serveri aadress');return}
  if(u&&!/^rtsp:\/\//i.test(u)){toast('Aadress peab algama rtsp://');return}
- const f={push_en:$('f_push_en').checked?1:0,push_url:u,push_user:$('f_push_user').value.trim()};
+ const f={rtsp_auth:$('f_rtsp_auth').checked?1:0,push_en:on?1:0,push_url:u,push_user:$('f_push_user').value.trim()};
  if($('f_push_pass').value)f.push_pass=$('f_push_pass').value;
- save(f,'Push seaded salvestatud')};
-$('fName').onsubmit=async e=>{e.preventDefault();const v=$('f_cam_name').value.trim();await save({cam_name:v},'Nimi salvestatud');
- const n=v||'SimCam';document.title=n+' – seaded';document.querySelector('header h1').textContent=n+' – seaded'};
-$('fCam').onsubmit=e=>{e.preventDefault();save({framesize:$('f_fs').value},'Resolutsioon muudetud')};
+ save(f,'Voogedastuse seaded salvestatud')};
+// Kaamera: nimi + resolutsioon (resolutsioon saadetakse ainult muutumisel – see taaskäivitab sensori)
+let curFs=null;
+$('fCamAll').onsubmit=async e=>{e.preventDefault();const v=$('f_cam_name').value.trim(),f={cam_name:v};
+ if(curFs!==null&&$('f_fs').value!=curFs)f.framesize=$('f_fs').value;
+ if(await save(f,'Kaamera seaded salvestatud')){const n=v||'SimCam';document.title=n+' – seaded';document.querySelector('header h1').textContent=n+' – seaded'}};
+// Rühmad kokkuvolditavad: telefonis vaikimisi avatud ainult Kaamera ja Võrk; valik jääb meelde
+(()=>{let st={};try{st=JSON.parse(localStorage.getItem('simcam_grp')||'{}')}catch(e){}
+ const narrow=matchMedia('(max-width:700px)').matches;
+ document.querySelectorAll('.grp').forEach(c=>{const d=c.firstElementChild,g=c.dataset.g;
+  d.open=g in st?st[g]:(!narrow||g=='cam'||g=='net');
+  d.addEventListener('toggle',()=>{st[g]=d.open;try{localStorage.setItem('simcam_grp',JSON.stringify(st))}catch(e){}})})})();
 $('f_mic_gain').oninput=()=>$('m_gain_t').textContent=$('f_mic_gain').value+' dB';
 $('f_mic_en').onchange=()=>{const on=$('f_mic_en').checked;$('micOn').style.display=on?'':'none';if(!on)SimAudio.stop();
  save({mic_en:on?1:0},on?'Mikrofon sees':'Mikrofon väljas')};
@@ -570,6 +591,7 @@ async function batPoll(){clearTimeout(bTimer);try{const b=await (await api('/api
  bTimer=setTimeout(batPoll,30000)}
 $('b_rng').onclick=e=>{const h=+e.target.dataset.h;if(!h)return;bRange=h;document.querySelectorAll('#b_rng button').forEach(b=>b.classList.toggle('on',+b.dataset.h===h));drawBat()};
 window.addEventListener('resize',drawBat);
+$('b_graph').addEventListener('toggle',()=>{if($('b_graph').open)drawBat()});
 async function batSave(f,msg){try{const d=await (await api('/api/battery',form(f))).json();toast(d.ok?msg:(d.error||'Viga'));if(d.ok)batPoll();return d.ok}catch(e){}}
 $('f_bat_en').onchange=()=>batSave({en:$('f_bat_en').checked?1:0},$('f_bat_en').checked?'Aku jälgimine sees':'Aku jälgimine väljas');
 $('fBat').onsubmit=e=>{e.preventDefault();const v=$('f_bat_v').value.trim();if(!v){toast('Sisesta mõõdetud pinge');return}
