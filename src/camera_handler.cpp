@@ -23,6 +23,11 @@ static constexpr uint16_t AF_CMD_ACK    = 0x3023;
 static constexpr uint16_t AF_FW_STATUS  = 0x3029;
 static constexpr uint8_t  AF_TRIGGER    = 0x03;  // ühekordne fookus
 static constexpr uint8_t  AF_CONTINUOUS = 0x04;  // pidev fookus
+static constexpr uint8_t  AF_PAUSE      = 0x06;  // peata AF, lääts jääb paigale
+static constexpr uint8_t  AF_RELEASE    = 0x08;  // vabasta (lääts lõpmatusse, olek 0x70)
+static constexpr uint8_t  AF_ST_CAF_OK   = 0x20;  // pidev AF: fookuses
+static constexpr uint16_t VCM_HI        = 0x3603; // VCM vool [9:4] (bitt 7 = VCM väljas)
+static constexpr uint16_t VCM_LO        = 0x3602; // VCM vool [3:0] bittides 7:4
 static constexpr uint8_t  AF_ST_FOCUSING = 0x00;
 static constexpr uint8_t  AF_ST_FOCUSED  = 0x10;
 static constexpr uint8_t  AF_ST_IDLE     = 0x70;
@@ -45,6 +50,11 @@ static uint32_t  s_ts = 0;
 static volatile float    s_fps = 0;
 static std::atomic<int>  s_consumers{0};
 static volatile bool     s_refocusReq = false;
+static volatile int      s_afMode = AF_MODE_SINGLE;   // 0 ühekordne, 1 pidev, 2 käsitsi
+static volatile int      s_afReqMode = -1;            // režiimi muutmise soov (hõivetaskile)
+static volatile int      s_afReqPos = -1;             // käsitsi asendi soov
+static volatile int      s_afPhase = 0;               // 0 = ootel, 1 = vabastus, 2 = otsing
+static volatile bool     s_afLocked = false;          // ühekordne: fookus leitud, lääts lukus
 static volatile uint32_t s_lastUse = 0;        // millis() viimasest kaadripäringust
 static volatile bool     s_sleeping = false;   // andur ooterežiimis (keegi ei vaata)
 static volatile uint8_t  s_afRaw = 0xFF;
@@ -145,12 +155,9 @@ static void initAutofocus() {
         return;
     }
     s_afOk = true;
-#if CAM_AF_CONTINUOUS
-    if (s_ov5640.autoFocusMode() == 0) LOGI(TAG, "OV5640 pidev autofookus sees");
-    else LOGW(TAG, "OV5640 pideva AF režiimi käivitamine ebaõnnestus");
-#else
-    LOGI(TAG, "OV5640 AF valmis (käsitsi 'Refocus')");
-#endif
+    s_afReqMode = Settings::get().afMode;      // rakendab hõivetask (sh käivitusel üks täisotsing)
+    LOGI(TAG, "OV5640 AF püsivara laetud, režiim: %s",
+         s_afReqMode == AF_MODE_CONT ? "pidev" : s_afReqMode == AF_MODE_MANUAL ? "käsitsi" : "ühekordne");
 }
 
 // Saada AF käsk (ACK=1, CMD=x). Tagastab kohe; olekut loetakse hiljem.
@@ -159,6 +166,21 @@ static void afCommand(uint8_t cmd) {
     if (!s) return;
     s->set_reg(s, AF_CMD_ACK, 0xFF, 0x01);
     s->set_reg(s, AF_CMD_MAIN, 0xFF, cmd);
+}
+
+// Läätse asend (VCM vool 0…1023): 0 = lõpmatus, suurem = lähemale
+static int readVcm() {
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s) return -1;
+    int hi = s->get_reg(s, VCM_HI, 0xFF), lo = s->get_reg(s, VCM_LO, 0xFF);
+    return hi < 0 || lo < 0 ? -1 : ((hi & 0x3F) << 4) | (lo >> 4);
+}
+static void setVcm(int pos) {
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s) return;
+    pos = constrain(pos, 0, 1023);
+    s->set_reg(s, VCM_HI, 0xFF, (pos >> 4) & 0x3F);         // bitt 7 = 0 → VCM toide sees
+    s->set_reg(s, VCM_LO, 0xF0, (pos & 0x0F) << 4);
 }
 
 // --- Pööramine ---------------------------------------------------------------
@@ -176,7 +198,6 @@ static void applySensorFlip() {
 static void captureTask(void *) {
     const uint32_t minInterval = 1000 / CAM_MAX_FPS;
     uint32_t fails = 0, lastAfPoll = 0, afTriggerAt = 0;
-    bool afPending = false;
     uint32_t fpsT0 = millis(), fpsN = 0;
 
     uint32_t dropUntil = 0;                     // pärast ärkamist: vanad/kohanduvad kaadrid
@@ -201,33 +222,63 @@ static void captureTask(void *) {
             s_sleeping = false;
             dropUntil = millis() + CAM_WAKE_DROP_MS;
             fpsT0 = millis(); fpsN = 0;
-#if CAM_AF_CONTINUOUS
-            if (s_afOk) afCommand(AF_CONTINUOUS);
-#endif
+            // Ühekordne/käsitsi: lääts jääb samasse asendisse (VCM registrid säilivad).
+            // Pidev AF tuleb pärast ooterežiimi uuesti käivitada.
+            if (s_afOk && s_afMode == AF_MODE_CONT && !s_afPhase) afCommand(AF_CONTINUOUS);
             LOGI(TAG, "Kaamera ärkas (vaataja)");
         }
 
-        // --- AF käsud ja oleku lugemine (samast taskist → SCCB pole jagatud)
+        // --- AF olekumasin (samast taskist → SCCB pole jagatud)
+        //  Ühekordne fookus = vabastus (0x08, lääts lõpmatusse) → käivitus (0x03):
+        //  ainult nii teeb püsivara täisulatuses otsingu; pideva AF-i pealt käivitades
+        //  otsib ta vaid ±20 ühikut praeguse asendi ümber ja jääb udusse kinni.
         if (s_afOk) {
+            sensor_t *s = esp_camera_sensor_get();
+            if (s_afReqMode >= 0) {
+                int m = s_afReqMode;
+                s_afReqMode = -1;
+                s_afMode = m;
+                if (m == AF_MODE_CONT) { s_afPhase = 0; afCommand(AF_CONTINUOUS); LOGI(TAG, "AF: pidev režiim"); }
+                else if (m == AF_MODE_MANUAL) {
+                    s_afPhase = 0;
+                    afCommand(AF_PAUSE);
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                    setVcm(Settings::get().afPos);
+                    LOGI(TAG, "AF: käsitsi, lääts %d", Settings::get().afPos);
+                } else s_refocusReq = true;          // ühekordne: tee kohe täisotsing
+            }
+            if (s_afReqPos >= 0) {
+                int p = s_afReqPos;
+                s_afReqPos = -1;
+                if (s_afMode == AF_MODE_MANUAL && !s_afPhase) setVcm(p);
+            }
             if (s_refocusReq) {
                 s_refocusReq = false;
-                afCommand(AF_TRIGGER);
-                afPending = true;
+                afCommand(AF_RELEASE);
+                s_afLocked = false;
+                s_afPhase = 1;
                 afTriggerAt = t0;
-                LOGI(TAG, "AF: ühekordne fookus käivitatud");
+                LOGI(TAG, "AF: täisotsing käivitatud");
             }
-            if (t0 - lastAfPoll > 300) {
+            if (s_afPhase || t0 - lastAfPoll > 300) {
                 lastAfPoll = t0;
-                sensor_t *s = esp_camera_sensor_get();
                 int st = s ? s->get_reg(s, AF_FW_STATUS, 0xFF) : -1;
                 if (st >= 0) s_afRaw = (uint8_t)st;
-                // Pärast ühekordset fookust naase pidevasse režiimi
-                if (afPending && (s_afRaw == AF_ST_FOCUSED || t0 - afTriggerAt > 4000)) {
-                    afPending = false;
-                    LOGI(TAG, "AF: %s", s_afRaw == AF_ST_FOCUSED ? "fookuses" : "timeout");
-#if CAM_AF_CONTINUOUS
-                    afCommand(AF_CONTINUOUS);
-#endif
+                if (s_afPhase == 1 && (s_afRaw == AF_ST_IDLE || t0 - afTriggerAt > 1500)) {
+                    afCommand(AF_TRIGGER);
+                    s_afPhase = 2;
+                    afTriggerAt = t0;
+                } else if (s_afPhase == 2 && (s_afRaw == AF_ST_FOCUSED || t0 - afTriggerAt > 6000)) {
+                    s_afPhase = 0;
+                    s_afLocked = s_afRaw == AF_ST_FOCUSED;
+                    int pos = readVcm();
+                    LOGI(TAG, "AF: %s, lääts %d", s_afRaw == AF_ST_FOCUSED ? "fookuses" : "ajalõpp", pos);
+                    if (s_afMode == AF_MODE_CONT) afCommand(AF_CONTINUOUS);
+                    else if (s_afMode == AF_MODE_MANUAL && pos >= 0 && s_afRaw == AF_ST_FOCUSED) {
+                        Settings::Data d = Settings::get();     // käsitsi režiimis: leitud asend → seadeks
+                        d.afPos = pos;
+                        Settings::save(d);
+                    }
                 }
             }
         }
@@ -359,6 +410,22 @@ bool control(const char *var, int val) {
         LOGI(TAG, "IR-filtri viik GPIO%d = %d", CAM_IR_PIN, s_ir);
         return true;
     }
+    if (!strcmp(var, "af_mode") || !strcmp(var, "af_pos") || !strcmp(var, "af_pos_live")) {
+        if (!s_afOk) return false;
+        s_lastUse = millis();                 // ooterežiimis ärata, et muutus rakenduks
+        Settings::Data d = Settings::get();
+        if (!strcmp(var, "af_mode")) {
+            if (val < 0 || val > 2) return false;
+            d.afMode = val;
+            Settings::save(d);
+            s_afReqMode = val;
+        } else {
+            if (val < 0 || val > 1023) return false;
+            if (!strcmp(var, "af_pos")) { d.afPos = val; Settings::save(d); }   // _live = ainult lohistamisel
+            s_afReqPos = val;
+        }
+        return true;
+    }
     if      (!strcmp(var, "framesize"))  return setFramesize(val);
     else if (!strcmp(var, "quality"))    r = s->set_quality(s, val);
     else if (!strcmp(var, "brightness")) r = s->set_brightness(s, val);
@@ -389,19 +456,29 @@ int readReg(int reg) {
     return s ? s->get_reg(s, reg, 0xFF) : -1;
 }
 
+int afMode() { return s_afMode; }
+int lensPos() { return s_afOk ? readVcm() : -1; }
+
+int writeReg(int reg, int val) {
+    sensor_t *s = esp_camera_sensor_get();
+    return s ? s->set_reg(s, reg, 0xFF, val & 0xFF) : -1;
+}
+
 String settingsJson() {
     sensor_t *s = esp_camera_sensor_get();
     if (!s) return "{}";
     const camera_status_t &st = s->status;
-    char b[512];
+    char b[640];
     snprintf(b, sizeof(b),
         "{\"framesize\":%d,\"quality\":%d,\"brightness\":%d,\"contrast\":%d,\"saturation\":%d,"
         "\"sharpness\":%d,\"aec\":%d,\"aec2\":%d,\"ae_level\":%d,\"aec_value\":%d,\"agc\":%d,"
         "\"agc_gain\":%d,\"gainceiling\":%d,\"awb\":%d,\"awb_gain\":%d,\"wb_mode\":%d,"
-        "\"hmirror\":%d,\"vflip\":%d,\"special_effect\":%d,\"ir\":%d,\"ir_pin\":%d,\"rotate\":%d}",
+        "\"hmirror\":%d,\"vflip\":%d,\"special_effect\":%d,\"ir\":%d,\"ir_pin\":%d,\"rotate\":%d,"
+        "\"af\":%s,\"af_mode\":%d,\"af_pos\":%d,\"lens\":%d,\"af_state\":\"%s\"}",
         st.framesize, st.quality, st.brightness, st.contrast, st.saturation, st.sharpness,
         st.aec, st.aec2, st.ae_level, st.aec_value, st.agc, st.agc_gain, st.gainceiling,
-        st.awb, st.awb_gain, st.wb_mode, (int)s_userHmirror, (int)s_userVflip, st.special_effect, s_ir, CAM_IR_PIN, (int)s_rotation);
+        st.awb, st.awb_gain, st.wb_mode, (int)s_userHmirror, (int)s_userVflip, st.special_effect, s_ir, CAM_IR_PIN, (int)s_rotation,
+        s_afOk ? "true" : "false", (int)s_afMode, Settings::get().afPos, lensPos(), afStatus());
     return String(b);
 }
 
@@ -423,14 +500,19 @@ bool afSupported() { return s_afOk; }
 
 bool refocus() {
     if (!s_afOk) return false;
+    s_lastUse = millis();                     // ärata ooterežiimist – AF vajab kaadreid
     s_refocusReq = true;
     return true;
 }
 
 const char *afStatus() {
     if (!s_afOk) return "n/a";
+    if (s_afPhase) return "focusing";
+    if (s_afMode == AF_MODE_MANUAL) return "manual";
+    if (s_afMode == AF_MODE_SINGLE && s_afLocked) return "focused";   // MCU võib pärast und olla "idle", lääts jääb paigale
     switch (s_afRaw) {
-        case AF_ST_FOCUSED:  return "focused";
+        case AF_ST_FOCUSED:
+        case AF_ST_CAF_OK:   return "focused";
         case AF_ST_FOCUSING: return "focusing";
         case AF_ST_IDLE:     return "idle";
         case AF_ST_INIT:     return "init";

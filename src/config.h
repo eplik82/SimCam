@@ -128,7 +128,13 @@
 #define CAM_IDLE_SLEEP_MS    15000       // nii kaua ilma vaatajata → andur ooterežiimi (aku)
 #define CAM_WAKE_DROP_MS     400         // ärkamisel jäetakse kaadrid vahele (säri kohandub)
 #define MIC_IDLE_STOP_MS     10000       // mikrofon peatub nii kaua pärast viimast vaatajat/kuulajat
-#define CAM_AF_CONTINUOUS    1           // 1 = pidev autofookus, 0 = ainult nupuga
+// Autofookuse režiim (seadetes muudetav): ühekordne täisotsing käivitusel ja
+// "Fookus" nupuga (lääts jääb paigale), pidev AF või käsitsi läätse asend.
+#define AF_MODE_SINGLE       0
+#define AF_MODE_CONT         1
+#define AF_MODE_MANUAL       2
+#define AF_MODE_DEFAULT      AF_MODE_SINGLE
+#define AF_POS_DEFAULT       512         // käsitsi fookus 0 (lõpmatus) … 1023 (lähedal)
 // Pildi pööre (vaikimisi; muudetav veebiliidesest): 0 või 180 (teeb sensor ise)
 #define CAM_ROTATION_DEFAULT 0
 

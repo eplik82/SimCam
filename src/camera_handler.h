@@ -34,7 +34,9 @@ void freeFrame(Frame &f);
 
 // Autofookus
 bool afSupported();
-bool refocus();               // käivita ühekordne fookus (nupp "Refocus")
+bool refocus();               // täisotsing (nupp "Fookus"); käsitsi režiimis salvestab leitud asendi
+int  afMode();                // AF_MODE_SINGLE / CONT / MANUAL
+int  lensPos();               // läätse asend 0…1023 (-1 = AF puudub)
 const char *afStatus();       // "focused", "focusing", "idle", "n/a", ...
 
 // Pildiseaded (sama nimetus kui esp32-camera CameraWebServer näites):
@@ -42,7 +44,8 @@ const char *afStatus();       // "focused", "focusing", "idle", "n/a", ...
 // ae_level, aec_value, agc, agc_gain, gainceiling, awb, awb_gain, wb_mode,
 // hmirror, vflip, special_effect, ir (IR-filtri viik, V1.3)
 bool control(const char *var, int val);
-int  readReg(int reg);            // SCCB registri lugemine (diagnostika), -1 = viga
+int  readReg(int reg);
+int  writeReg(int reg, int val);  // SCCB registri kirjutamine (diagnostika)            // SCCB registri lugemine (diagnostika), -1 = viga
 String settingsJson();            // hetkeseaded JSON-ina
 
 // Pööramine 0 või 180 kraadi (sensor; salvestatakse NVS-i)

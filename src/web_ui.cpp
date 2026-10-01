@@ -677,6 +677,15 @@ static esp_err_t h_cam(httpd_req_t *req) {
     httpd_req_get_url_query_str(req, q, sizeof(q));
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    if (httpd_query_key_value(q, "wreg", reg, sizeof(reg)) == ESP_OK &&
+        httpd_query_key_value(q, "val", val, sizeof(val)) == ESP_OK) {   // diagnostika
+        int r = (int)strtol(reg, nullptr, 0), v = (int)strtol(val, nullptr, 0);
+        int rc = Camera::writeReg(r, v);
+        LOGI(TAG, "SCCB kirjutus 0x%04X = 0x%02X (rc %d)", r, v & 0xFF, rc);
+        char b[64];
+        snprintf(b, sizeof(b), "{\"reg\":%d,\"val\":%d,\"rc\":%d}", r, v, rc);
+        return httpd_resp_sendstr(req, b);
+    }
     if (httpd_query_key_value(q, "reg", reg, sizeof(reg)) == ESP_OK) {
         int r = (int)strtol(reg, nullptr, 0);
         char b[48];

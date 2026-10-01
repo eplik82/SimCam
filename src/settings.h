@@ -27,6 +27,8 @@ struct Data {
     bool micEnabled;          // mikrofon sees (vaikimisi väljas – privaatsus)
     int  micGain;             // mikrofoni võimendus dB (0…40)
     int  micCodec;            // 0 = G.711 µ-law 8 kHz, 1 = L16 16 kHz
+    int  afMode;              // 0 = ühekordne, 1 = pidev, 2 = käsitsi (AF_MODE_*)
+    int  afPos;               // käsitsi fookuse läätse asend 0…1023
     bool rtspAudio;           // lisa helirada RTSP voogu        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 

@@ -186,6 +186,25 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
   internetikontrollid (`generate_204`, `hotspot-detect.html`, `connecttest.txt`)
   suunatakse kaamera lehele.
 
+## Autofookus
+
+OV5640 AF püsivara (0015/ESP32-OV5640-AF) laetakse käivitusel. Režiim: ⚙ → **📷 Pilt → Fookus**
+(salvestatakse NVS-i):
+
+| Režiim | Kirjeldus |
+|---|---|
+| **Ühekordne** (vaikimisi) | Käivitusel ja „Fookus" nupuga täisotsing, siis lääts jääb paigale – ka pärast kaamera ooterežiimi |
+| **Pidev** | AF püsivara teravustab ise ümber, kui pilt muutub |
+| **Käsitsi** | Läätse asend liuguriga 0 (lõpmatus) … 1023 (lähedal); „Fookus" leiab teravaima asendi ja salvestab selle |
+
+**Miks varem pilt fookusesse ei jäänud (≤ v1.9.0):** pidevas režiimis käivitatud
+„Fookus" otsis püsivaras vaid ±20 ühikut praeguse asendi ümber; 4 s pärast lülitas kood
+pideva AF-i uuesti sisse (oodati olekut 0x10, pidev AF annab 0x20) ja see nihutas läätse;
+ka igal ooterežiimist ärkamisel taaskäivitati pidev AF. Nüüd: vabastus (0x08, lääts
+lõpmatusse) → käivitus (0x03) = täisotsing 0…1023, mille järel lääts jääb paigale.
+Läätse asend = VCM vool registrites 0x3603[5:0]/0x3602[7:4] (näha seadete lehel).
+Diagnostika: `/api/cam?reg=0x3029` (AF olek), `/api/cam?wreg=<reg>&val=<v>` (kirjutus).
+
 ## Pööramine ja kaamera juhtimine
 
 **Resolutsioon:** ⚙ → **📷 Pilt** → QVGA 320×240, VGA 640×480, **SVGA 800×600**

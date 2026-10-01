@@ -36,6 +36,8 @@ static void defaults(Data &d) {
     d.micGain = 24;
     d.micCodec = 0;
     d.rtspAudio = true;
+    d.afMode = AF_MODE_DEFAULT;
+    d.afPos = AF_POS_DEFAULT;
 }
 
 bool applyFailsafe(Data &d) {
@@ -77,6 +79,8 @@ void load() {
         d.micGain = constrain(p.getInt("mic_gain", d.micGain), 0, 40);
         d.micCodec = p.getInt("mic_codec", d.micCodec) == 1 ? 1 : 0;
         d.rtspAudio = p.getBool("rtsp_audio", d.rtspAudio);
+        d.afMode = constrain(p.getInt("af_mode", d.afMode), 0, 2);
+        d.afPos = constrain(p.getInt("af_pos", d.afPos), 0, 1023);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
     }
@@ -137,6 +141,8 @@ bool save(const Data &din) {
     p.putInt("mic_gain", d.micGain);
     p.putInt("mic_codec", d.micCodec);
     p.putBool("rtsp_audio", d.rtspAudio);
+    p.putInt("af_mode", d.afMode);
+    p.putInt("af_pos", d.afPos);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_d = d;

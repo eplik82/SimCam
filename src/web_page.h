@@ -256,6 +256,19 @@ details form{margin-top:8px}
    <div class="note" id="fsNote">Suurem resolutsioon = detailsem pilt, kuid väiksem kaadrisagedus ja suurem andmemaht. Mobiilivõrgus (LTE) soovitame SVGA 800×600 või väiksemat.</div>
    <div class="btns"><button class="pri" type="submit">Rakenda</button></div>
   </form>
+  <div id="afBox" style="display:none;margin-top:14px">
+   <hr>
+   <label style="margin-top:10px">Fookus
+    <select class="sel" id="f_af_mode"><option value="0">Ühekordne (soovitatav)</option><option value="1">Pidev</option><option value="2">Käsitsi</option></select></label>
+   <div class="note">Ühekordne: teravustab käivitusel ja „Fookus" nupuga, siis lääts jääb paigale. Pidev: teravustab ise ümber, kui pilt muutub (võib „hüpata"). Käsitsi: läätse asend liuguriga.</div>
+   <div id="afMan" style="display:none;margin-top:8px">
+    <div class="row"><span>Läätse asend</span><span id="af_pos_t">-</span></div>
+    <input type="range" id="f_af_pos" min="0" max="1023" step="1" aria-label="Läätse asend">
+    <div class="note">← kaugele (lõpmatus) · lähedale →. „Fookus" nupp leiab teravaima asendi ja salvestab selle.</div>
+   </div>
+   <div class="row" style="margin-top:6px"><span>Olek</span><span id="af_st">-</span></div>
+   <div class="btns" style="margin-top:6px"><button type="button" id="bAfNow">◎ Fokusseeri</button></div>
+  </div>
  </section>
 
  <section class="card"><h2>WiFi võrk</h2>
@@ -402,6 +415,20 @@ $('fSim').onsubmit=async e=>{e.preventDefault();const o=$('s_old').value.trim(),
  if(!confirm('Muuta SIM-kaardi PIN?'))return;toast('Muudan SIM PIN-i…');
  try{const d=await (await api('/api/simpin',form({old:o,new:n}))).json();
   toast(d.ok?'SIM PIN muudetud':('Ebaõnnestus: '+(d.error||'')));if(d.ok){['s_old','s_new','s_new2'].forEach(i=>$(i).value='')}}catch(e){}};
+const AFS={focused:'fookuses ✓',focusing:'fokusseerin…',manual:'käsitsi',idle:'ootel',busy:'töötab','n/a':'puudub'};
+let afDrag=false,afT=0;
+async function afLoad(){try{const c=await (await api('/api/cam',{cache:'no-store'})).json();
+ $('afBox').style.display=c.af?'':'none';if(!c.af)return;
+ if(document.activeElement!==$('f_af_mode'))$('f_af_mode').value=c.af_mode;$('afMan').style.display=c.af_mode==2?'':'none';
+ if(!afDrag){$('f_af_pos').value=c.af_pos}
+ $('af_pos_t').textContent=$('f_af_pos').value;
+ $('af_st').textContent=(AFS[c.af_state]||c.af_state)+(c.lens>=0?` · lääts ${c.lens}`:'')}catch(e){}}
+$('f_af_mode').onchange=async e=>{await api('/api/cam?var=af_mode&val='+e.target.value);toast('Fookuse režiim muudetud');setTimeout(afLoad,300)};
+$('f_af_pos').oninput=e=>{afDrag=true;$('af_pos_t').textContent=e.target.value;const n=Date.now();if(n-afT>150){afT=n;api('/api/cam?var=af_pos_live&val='+e.target.value).catch(()=>{})}};
+$('f_af_pos').onchange=async e=>{afDrag=false;await api('/api/cam?var=af_pos&val='+e.target.value);afLoad()};
+$('bAfNow').onclick=async()=>{const b=$('bAfNow');b.disabled=true;try{const r=await api('/api/focus',{method:'POST'});toast(r.ok?'Fokusseerin…':'Autofookus pole saadaval')}catch(e){}
+ let k=0;const t=setInterval(()=>{afLoad();if(++k>12){clearInterval(t);b.disabled=false}},500)};
+afLoad();setInterval(afLoad,5000);
 $('fCam').onsubmit=e=>{e.preventDefault();save({framesize:$('f_fs').value},'Resolutsioon muudetud')};
 $('f_mic_gain').oninput=()=>$('m_gain_t').textContent=$('f_mic_gain').value+' dB';
 $('f_mic_en').onchange=()=>{const on=$('f_mic_en').checked;$('micOn').style.display=on?'':'none';if(!on)SimAudio.stop();
