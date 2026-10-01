@@ -12,11 +12,13 @@
 #include "settings.h"
 #include "wifi_manager.h"
 #include "ota.h"
+#include "battery.h"
 #include "log.h"
 
 #include <Arduino.h>
 #include <atomic>
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "lwip/sockets.h"
 
 static const char *TAG = "WEB";
@@ -224,6 +226,61 @@ static esp_err_t h_password(httpd_req_t *req) {
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+// --- Aku -------------------------------------------------------------------------
+static esp_err_t sendJson(httpd_req_t *req, const String &j);
+
+static String batJson() {
+    Battery::Status b = Battery::status();
+    char j[260];
+    snprintf(j, sizeof(j),
+        "\"bat\":{\"enabled\":%s,\"state\":\"%s\",\"v\":%.3f,\"raw\":%.3f,\"pct\":%d,"
+        "\"slope\":%.2f,\"min_left\":%d,\"usb\":%s,\"cal\":%.4f}",
+        b.enabled ? "true" : "false", Battery::stateName(b.state), b.voltage, b.raw, b.percent,
+        b.slope, b.minutesLeft, b.usbHost ? "true" : "false", Settings::get().batCal);
+    return String(j);
+}
+
+// GET /api/battery – olek + ajalugu (mV, iga BAT_HIST_SEC s järel, vanim → uusim)
+static esp_err_t h_battery(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    uint16_t *h = (uint16_t *)heap_caps_malloc(BAT_HIST_LEN * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    size_t n = h ? Battery::history(h, BAT_HIST_LEN) : 0;
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    String head = "{" + batJson() + ",\"step_s\":" + String(BAT_HIST_SEC) + ",\"hist\":[";
+    httpd_resp_send_chunk(req, head.c_str(), head.length());
+    char buf[1024];
+    size_t len = 0;
+    for (size_t i = 0; i < n; i++) {
+        len += snprintf(buf + len, sizeof(buf) - len, i ? ",%u" : "%u", h[i]);
+        if (len > sizeof(buf) - 16) { httpd_resp_send_chunk(req, buf, len); len = 0; }
+    }
+    if (len) httpd_resp_send_chunk(req, buf, len);
+    free(h);
+    httpd_resp_send_chunk(req, "]}", 2);
+    return httpd_resp_send_chunk(req, nullptr, 0);
+}
+
+// POST /api/battery: en=0/1 (aku ühendatud), v=<multimeetriga mõõdetud pinge> (kalibreerimine),
+// reset_cal=1 (tegur tagasi 1,0)
+static esp_err_t h_battery_post(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    char body[128], v[16];
+    if (!readBody(req, body, sizeof(body))) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
+    if (formField(body, "en", v, sizeof(v)) || formField(body, "reset_cal", v, sizeof(v))) {
+        Settings::Data d = Settings::get();
+        if (formField(body, "en", v, sizeof(v))) d.batEnabled = v[0] == '1';
+        if (formField(body, "reset_cal", v, sizeof(v)) && v[0] == '1') d.batCal = 1.0f;
+        if (!Settings::save(d)) return sendJson(req, "{\"ok\":false,\"error\":\"Salvestamine ebaõnnestus\"}");
+    }
+    if (formField(body, "v", v, sizeof(v)) && v[0]) {
+        for (char *c = v; *c; c++) if (*c == ',') *c = '.';
+        float f = Battery::calibrate(strtof(v, nullptr));
+        if (f == 0) return sendJson(req, "{\"ok\":false,\"error\":\"Kalibreerimine ebaõnnestus: pinge peab olema 2,5–4,5 V ja erinema näidust alla 20 %\"}");
+    }
+    return sendJson(req, "{\"ok\":true}");
+}
+
 static esp_err_t h_status(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     LTE::Status m = LTE::status();
@@ -254,7 +311,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         "\"sys\":{\"uptime\":%llu,\"heap_free\":%u,\"heap_total\":%u,\"heap_min\":%u,"
         "\"psram_free\":%u,\"psram_total\":%u,\"temp\":%.1f,\"rtsp_clients\":%d,"
         "\"http_streams\":%d,\"rtsp_auth\":%s,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\","
-        "\"reset\":\"%s\",\"log_w\":%lu,\"log_e\":%lu}}",
+        "\"reset\":\"%s\",\"log_w\":%lu,\"log_e\":%lu},%s}",
         w.staEnabled ? "true" : "false", w.staConnected ? "true" : "false", staSsid, w.staIp,
         w.staRssi, w.channel, w.apEnabled ? "true" : "false", apSsid, w.apIp, w.apClients, w.apTemp ? "true" : "false",
         LTE::enabled() ? "true" : "false",
@@ -269,7 +326,8 @@ static esp_err_t h_status(httpd_req_t *req) {
         ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(),
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
         RtspServer::clients(), (int)s_streams, (Auth::enabled() && cfgd.rtspAuth) ? "true" : "false", ip, RTSP_PORT, RTSP_PATH,
-        SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors());
+        SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors(),
+        batJson().c_str());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -471,9 +529,12 @@ static esp_err_t h_view(httpd_req_t *req) {
     for (auto &v : s_views)
         if (v.used && id[0] && !strcmp(v.id, id)) { fps = v.fps; kBps = v.kBps; }
     portEXIT_CRITICAL(&s_viewMux);
-    char b[160];
-    snprintf(b, sizeof(b), "{\"fps\":%.1f,\"kBps\":%.1f,\"cam_fps\":%.1f,\"rotate\":%d,\"frame_kb\":%.1f}",
-             fps, kBps, Camera::fps(), Camera::rotation(), Camera::lastFrameBytes() / 1024.0f);
+    Battery::Status bs = Battery::status();
+    char b[256];
+    snprintf(b, sizeof(b), "{\"fps\":%.1f,\"kBps\":%.1f,\"cam_fps\":%.1f,\"rotate\":%d,\"frame_kb\":%.1f,"
+             "\"bat\":{\"enabled\":%s,\"state\":\"%s\",\"v\":%.2f,\"pct\":%d}}",
+             fps, kBps, Camera::fps(), Camera::rotation(), Camera::lastFrameBytes() / 1024.0f,
+             bs.enabled ? "true" : "false", Battery::stateName(bs.state), bs.voltage, bs.percent);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, b);
@@ -726,6 +787,8 @@ bool begin() {
         {"/log",        HTTP_GET,  h_log_page, nullptr},
         {"/api/log",    HTTP_GET,  h_log,     nullptr},
         {"/api/log/clear", HTTP_POST, h_log_clear, nullptr},
+        {"/api/battery", HTTP_GET,  h_battery,      nullptr},
+        {"/api/battery", HTTP_POST, h_battery_post, nullptr},
     };
     for (const auto &u : uris) httpd_register_uri_handler(s_server, &u);
     httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, h_notfound);

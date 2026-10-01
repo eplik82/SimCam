@@ -80,6 +80,10 @@
 #define SD_MOSI_PIN          38
 #define SD_MISO_PIN          40
 
+// Aku (skeem T_SIMCAM-V1.3: TP4056 laadija, jagur RD2/RD1 = 100 k / 100 k)
+#define BAT_ADC_PIN          3    // BAT_ADC → ESP32-S3 GPIO3 (ADC1_CH2)
+#define BAT_DIVIDER          2.0f // aku pinge = ADC pinge × 2
+
 // -----------------------------------------------------------------------------
 //  Modemi UART / PPP
 // -----------------------------------------------------------------------------

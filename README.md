@@ -41,6 +41,8 @@ release'ist (FOTA)**.
   ise sisse (ja pärast ühenduse taastumist välja).
 * **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel või soovi korral
   automaatselt; eelmine versioon taastatakse, kui uus ei käivitu.
+* **Aku** (TP4056 laadija plaadil): täituvus %, pinge, olek (laeb / tühjeneb /
+  täis), hinnanguline tööaeg ja 24 h pingegraafik – vt [Aku](#aku).
 * **Logi veebiliideses** (⚙ → 📄 Logi): seadme logi reaalajas, filtreerimine
   taseme ja teksti järgi, allalaadimine; pärast kokkujooksmist ka **eelmise
   käivituse viimased read** ja taaskäivituse põhjus – vt [Logi](#logi).
@@ -82,8 +84,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.4.0
-git push origin v1.4.0
+git tag v1.5.0
+git push origin v1.5.0
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -160,6 +162,39 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
 * `GET /api/cam?var=<nimi>&val=<väärtus>` – nt `rotate`, `aec`, `aec_value`,
   `agc_gain`, `brightness`, `hmirror`, `vflip`, `framesize`, `quality`, `ir`.
   Ilma parameetriteta tagastab kõik seaded.
+
+## Aku
+
+T-SIMCAM V1.3 plaadil on Li-ion aku pistik (P2), **TP4056** laadija (laadimisvool
+~600 mA, PROG = 2 kΩ; laeb USB-C toitest) ja aku pinge jagur 100 k / 100 k →
+**GPIO3** (`BAT_ADC`).
+
+Veebiliideses: ⚙ → **🔋 Aku**, avalehel pildi all `🔋 63 %` (`⚡` laadimisel,
+`🪫` madal).
+
+| Näit | Kuidas saadakse |
+|---|---|
+| Pinge | GPIO3 ADC (16 lugemise keskmine iga 2 s, silutud), × 2 jaguri järgi, × kalibreerimistegur |
+| Täituvus % | Li-ion tühjenemiskõvera järgi (4,20 V = 100 %, 3,30 V = 0 %) |
+| Olek | pinge muutus viimase 10 min jooksul: tõuseb → **Laeb**, langeb → **Tühjeneb** (≤ 15 % → **Madal**), ≥ 4,15 V → **Täis / laadijal** |
+| Tööaeg | viimase 30 min langus → aeg, kuni pinge jõuab 3,40 V-ni (hinnang) |
+| Graafik | punkt iga 30 s järel, viimased 24 h (1 h / 6 h / 24 h vaade) |
+| USB arvutiga | ESP32 USB näeb arvutit (siis aku laeb); tavaline USB-laadija ei paista |
+
+**Voolu ei saa mõõta:** plaadil pole voolu mõõtmist ning TP4056 oleku viigud
+(CHRG/STDBY) on ühendatud ainult plaadi LED-iga, mitte ESP32-ga. Seepärast
+tuletatakse olek pinge muutumisest – esimese ~3 min jooksul on olek „Mõõdan…".
+Laadimise ajal on pinge (ja %) tegelikust kõrgem. Voolu ja võimsuse mõõtmiseks
+saab akujuhtmesse lisada nt INA219/INA226 mooduli (vajab I²C viike ja tarkvara
+tuge).
+
+**Kalibreerimine:** ESP32 ADC viga on mõni protsent. Mõõda aku pinge
+multimeetriga ja sisesta see ⚙ → Aku → „Aku seaded ja kalibreerimine" →
+„Kalibreeri". Seal saab aku jälgimise ka välja lülitada (kui akut pole).
+Ilma akuta näitab laadija väljund ~4,2 V, s.t „Täis".
+
+API: `GET /api/battery` (olek + ajalugu mV-des), olek ka `/api/status` → `bat`;
+`POST /api/battery` väljadega `en=0|1`, `v=<volti>` (kalibreerimine), `reset_cal=1`.
 
 ## Logi
 
@@ -289,6 +324,7 @@ SimCam/
     ├── wifi_manager.*        WiFi klient + hotspot + captive DNS + mDNS
     ├── modem_lte.*           LTE: PWRKEY, PIN, APN, PPP/CMUX, taastamine
     ├── ota.*                 FOTA GitHubi release'ist + tagasipööramine
+    ├── battery.*             aku pinge (GPIO3), täituvus, olek, ajalugu
     ├── settings.*            NVS seaded
     ├── auth.*                parool, sessiooniküpsis, HTTP Basic
     └── log.*                 logi: USB Serial + mälupuhver (/log) + eelmise käivituse logi (RTC)

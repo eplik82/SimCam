@@ -29,6 +29,8 @@ static void defaults(Data &d) {
     d.authSalt[0] = 0;
     d.rtspAuth = true;
     d.autoUpdate = false;
+    d.batEnabled = true;
+    d.batCal = 1.0f;
 }
 
 bool applyFailsafe(Data &d) {
@@ -60,6 +62,9 @@ void load() {
         if (p.isKey("web_pass")) p.getString("web_pass", d.webPass, sizeof(d.webPass));
         d.rtspAuth = p.getBool("rtsp_auth", d.rtspAuth);
         d.autoUpdate = p.getBool("auto_upd", d.autoUpdate);
+        d.batEnabled = p.getBool("bat_en", d.batEnabled);
+        d.batCal = p.getFloat("bat_cal", d.batCal);
+        if (!(d.batCal > 0.8f && d.batCal < 1.25f)) d.batCal = 1.0f;
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
     }
@@ -94,6 +99,7 @@ bool save(const Data &din) {
     if (d.staEnabled && strlen(d.staSsid) == 0) return false;
     if (d.rotation % 90 != 0 || d.rotation < 0 || d.rotation > 270) return false;
     if (strlen(d.webPass) < 4) return false;
+    if (!(d.batCal > 0.8f && d.batCal < 1.25f)) return false;
     for (const char *c = d.simPin; *c; c++) if (*c < '0' || *c > '9') return false;   // PIN = numbrid
     Preferences p;
     if (!p.begin(NS, false)) return false;
@@ -111,6 +117,8 @@ bool save(const Data &din) {
     p.putString("salt", d.authSalt);
     p.putBool("rtsp_auth", d.rtspAuth);
     p.putBool("auto_upd", d.autoUpdate);
+    p.putBool("bat_en", d.batEnabled);
+    p.putFloat("bat_cal", d.batCal);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_d = d;

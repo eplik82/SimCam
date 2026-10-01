@@ -20,7 +20,9 @@ struct Data {
     char webPass[65];         // veebiliidese + RTSP parool
     char authSalt[17];
     bool rtspAuth;            // kas RTSP nõuab parooli
-    bool autoUpdate;          // paigalda GitHubi uuendused automaatselt        // juhuslik sool sessiooniküpsise jaoks (hex)
+    bool autoUpdate;          // paigalda GitHubi uuendused automaatselt
+    bool batEnabled;          // aku on ühendatud (näita olekut veebiliideses)
+    float batCal;             // aku pinge kalibreerimistegur (1.0 = ilma parandita)        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 
 void load();                  // loe NVS-ist (puuduvad väärtused = config.h vaikeväärtused)
