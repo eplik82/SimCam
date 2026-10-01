@@ -14,7 +14,8 @@ release'ist (FOTA)**.
 | Olek (JSON)   | `http://<IP>/api/status`                   |
 | Logi          | `http://<IP>/log` (tekstina `http://<IP>/api/log`) |
 
-> ⚠️ **MikroTik R11e-LTE selle plaadiga EI tööta ja võib rikki minna** –
+> ⚠️ **MikroTik R11e-LTE ja Sierra Wireless MC7304 (ning teised ainult USB-ga
+> mPCIe modemid) selle plaadiga EI tööta ja võivad rikki minna** –
 > vt [Modemi ühilduvus](#modemi-ühilduvus).
 
 ---
@@ -220,11 +221,37 @@ Modem on ESP32-ga ühendatud **UART-i** kaudu, seega piirab läbilaskevõimet UA
 2. Ka õige toite korral ei saa ESP32 kaardiga suhelda (USB vs UART) – püsivaraga
    seda lahendada ei saa.
 
+### Sierra Wireless AirPrime MC7304 – ei sobi
+
+MC7304 on hea LTE Cat 3 kaart (Euroopa sagedused B1/B3/B7/B8/B20), kuid sama
+põhjusel nagu R11e-LTE ei saa ESP32 sellega T-SIMCAM-i pesas suhelda:
+
+| | MC7304 | T-SIMCAM mPCIe pesa |
+|---|---|---|
+| Andmeliides | **ainult USB 2.0** (QMI/MBIM andmeside, AT-, DM- ja NMEA-pordid on USB kaudu); UART-i mPCIe pistikul **pole** | **UART** mPCIe viikudel 17/19; USB D+/D− (36/38) **pole ESP32-ga ühendatud** |
+| Viigud 17/19 | reserveeritud / ühendamata | ESP32 UART (GPIO46/45) |
+| Toide | mPCIe standard **3,3 V** (umbes 3,0–3,6 V) | **4,2 V** (DVDD4V2, SIM7600 jaoks) |
+| Sisselülitus | käivitub toite saamisel (`W_DISABLE#`, viik 20), PWRKEY-d pole | GPIO48 → viik 6 (standardis +1,5 V) |
+
+1. **Võta MC7304 T-SIMCAM-i pesast välja.** 4,2 V on üle kaardi lubatud
+   toitepinge – kaart võib kuumeneda ja rikki minna (kui see on juba pesas olnud,
+   kontrolli enne muud kasutust, kas see töötab nt USB-adapteriga arvutis).
+2. ⚙ → Mobiilivõrk → võta **„LTE modem sees"** maha (siis ei saadeta pessa
+   PWRKEY impulsse ega AT-käske).
+3. Püsivara muudatusega seda lahendada ei saa: ESP32 ja kaardi vahel puudub
+   ühine liides (kaardil USB, pesal UART), lisaks on toide vale.
+
+MC7304 kasutamiseks on vaja seadet, millel on mPCIe pesa koos **USB host**
+liidese ja 3,3 V toitega (nt ruuter või USB–mPCIe adapter arvutis); ESP32-S3-ga
+otse ühendades tuleks ehitada eraldi plaat (3,3 V regulaator ≥ 2 A + USB OTG
+host + QMI/MBIM draiver), mida see projekt ei toeta.
+
 **Sobib:** LilyGO **T-PCIe SIM7600E-H** (Euroopa sagedused B1/B3/B7/B8/B20),
 `MODEM_TYPE_SIM7600`, CMUX, kuni 3 Mbit/s UART. `MODEM_TYPE_GENERIC` sobib muu
 UART-iga 3GPP modemiga, mis talub 4,2 V toidet.
 
 Allikad: [MikroTik R11e-LTE](https://mikrotik.com/product/r11e_lte),
+Sierra Wireless *AirPrime MC7304 Product Technical Specification*,
 [OpenWrt #11400](https://github.com/openwrt/openwrt/issues/11400),
 [T-SIMCAM skeem](https://github.com/Xinyuan-LilyGO/LilyGo-Camera-Series/tree/master/schematic),
 [LilyGO T-SIMCAM wiki](https://wiki.lilygo.cc/products/t-sim-series/t-simcam/).
@@ -236,7 +263,7 @@ Allikad: [MikroTik R11e-LTE](https://mikrotik.com/product/r11e_lte),
 | `PSRAM puudub!` | `board_build.arduino.memory_type = qio_opi` peab olema `platformio.ini`-s |
 | `esp_camera_init ebaõnnestus: 0x105` | kaamera kaabel lahti või vale suunaga |
 | Hotspoti leht ei avane ise | ava `http://4.3.2.1/`; lülita telefonis välja „Privaatne DNS"/VPN |
-| `Modem ei vasta UART-il` | vale kaart (nt R11e-LTE) või modem pole pesas korralikult |
+| `Modem ei vasta UART-il` | vale kaart (USB-ainult, nt R11e-LTE või MC7304 – eemalda!) või modem pole pesas korralikult |
 | `APN on seadistamata` / `PIN on seadistamata` | ⚙ → Mobiilivõrk |
 | `SIM PIN vale!` | paranda PIN seadetes (sama valet PIN-i enam ei proovita) |
 | `SIM on PUK lukus!` | ava SIM telefonis PUK-koodiga |

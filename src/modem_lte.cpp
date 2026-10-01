@@ -502,9 +502,9 @@ static void lteTask(void *) {
         case State::PowerOn:
             if (powerOnModem()) state = State::AtInit;
             else {
-                // Levinuim põhjus: USB-ainult mPCIe kaart (nt MikroTik R11e-LTE),
+                // Levinuim põhjus: USB-ainult mPCIe kaart (nt MikroTik R11e-LTE, Sierra MC7304),
                 // mis ei kasuta T-SIMCAM-i UART liine. Vt README "Modemi ühilduvus".
-                setError("Modem ei vasta UART-il (GPIO45/46). USB-kaardid nagu R11e-LTE ei sobi!");
+                setError("Modem ei vasta UART-il. USB-kaardid (R11e-LTE, MC7304) ei sobi – eemalda kaart!");
                 state = State::Recovering;
             }
             break;
