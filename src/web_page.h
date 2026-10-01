@@ -317,6 +317,21 @@ details form{margin-top:8px}
   </form>
  </section>
 
+ <section class="card"><h2>📡 RTSP push (serverisse)</h2>
+  <div class="note">Seade saadab voo ise sinu serverisse (nt <b>MediaMTX</b>) – töötab ka mobiilivõrgus, kus seadmele väljast ligi ei pääse. Vaatajad ühenduvad serveriga.</div>
+  <form id="fPush" autocomplete="off" style="margin-top:8px">
+   <label class="chk"><input type="checkbox" id="f_push_en"> Push sees</label>
+   <label>Serveri aadress<input type="text" id="f_push_url" maxlength="159" placeholder="rtsp://server.ee:8554/simcam" autocapitalize="off" spellcheck="false"></label>
+   <div class="inl"><label style="flex:1">Kasutaja<input type="text" id="f_push_user" maxlength="47" autocomplete="off" autocapitalize="off"></label>
+    <label style="flex:1">Parool<input type="password" id="f_push_pass" maxlength="63" autocomplete="new-password"></label></div>
+   <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
+  </form>
+  <div class="row" style="margin-top:6px"><span>Olek</span><span id="push_st">-</span></div>
+  <div class="row"><span>Voog</span><span id="push_rate">-</span></div>
+  <div class="note" id="push_err"></div>
+  <div class="note">NB: push hoiab kaamera ja mikrofoni pidevalt töös (aku säästurežiim ei rakendu).</div>
+ </section>
+
  <section class="card"><h2>RTSP ja parool</h2>
   <div class="note">RTSP aadress (VLC: Meedia → Ava võrguvoog):</div>
   <div class="url"><code id="rtsp">-</code><button type="button" id="bCopy" title="Kopeeri">⧉</button></div>
@@ -398,6 +413,8 @@ function bars(n){let h='<span class="bars">';for(let i=0;i<4;i++)h+=`<i class="$
 let rtspAuth=true;
 async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-store'})).json();
  if(document.activeElement!==$('f_cam_name'))$('f_cam_name').value=c.cam_name||'';
+ $('f_push_en').checked=c.push_en;$('f_push_url').value=c.push_url||'';$('f_push_user').value=c.push_user||'';
+ $('f_push_pass').value='';$('f_push_pass').placeholder=c.push_has_pass?'(muutmata)':'(puudub)';
  $('f_sta_en').checked=c.sta_en;$('f_sta_ssid').value=c.sta_ssid;$('f_sta_pass').placeholder=c.sta_has_pass?'(muutmata)':'(avatud võrk)';
  $('f_ap_en').checked=c.ap_en;$('f_ap_ssid').value=c.ap_ssid;
  $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;
@@ -458,6 +475,17 @@ $('f_af_pos').onchange=async e=>{afDrag=false;await api('/api/cam?var=af_pos&val
 $('bAfNow').onclick=async()=>{const b=$('bAfNow');b.disabled=true;try{const r=await api('/api/focus',{method:'POST'});toast(r.ok?'Fokusseerin…':'Autofookus pole saadaval')}catch(e){}
  let k=0;const t=setInterval(()=>{afLoad();if(++k>12){clearInterval(t);b.disabled=false}},500)};
 afLoad();setInterval(afLoad,5000);
+const PST={off:'väljas',connecting:'ühendan…',streaming:'● saadab',retry:'uus katse varsti',error:'viga'};
+function showPush(p){if(!p)return;const up=p.up_s,h=Math.floor(up/3600),m=Math.floor(up%3600/60);
+ $('push_st').textContent=(PST[p.state]||p.state)+(p.state=='streaming'?` · ${h?h+' h ':''}${m} min`:'')+(p.retries?` · katkestusi ${p.retries}`:'');
+ $('push_st').style.color=p.state=='streaming'?'var(--ok)':p.state=='retry'||p.state=='error'?'var(--warn)':'';
+ $('push_rate').textContent=p.state=='streaming'?`${p.fps.toFixed(1)} fps · ${p.kBps.toFixed(0)} kB/s · kokku ${p.sent_mb.toFixed(1)} MB`:'-';
+ $('push_err').textContent=p.error&&p.state!='streaming'?'⚠ '+p.error:''}
+$('fPush').onsubmit=e=>{e.preventDefault();const u=$('f_push_url').value.trim();
+ if(u&&!/^rtsp:\/\//i.test(u)){toast('Aadress peab algama rtsp://');return}
+ const f={push_en:$('f_push_en').checked?1:0,push_url:u,push_user:$('f_push_user').value.trim()};
+ if($('f_push_pass').value)f.push_pass=$('f_push_pass').value;
+ save(f,'Push seaded salvestatud')};
 $('fName').onsubmit=async e=>{e.preventDefault();const v=$('f_cam_name').value.trim();await save({cam_name:v},'Nimi salvestatud');
  const n=v||'SimCam';document.title=n+' – seaded';document.querySelector('header h1').textContent=n+' – seaded'};
 $('fCam').onsubmit=e=>{e.preventDefault();save({framesize:$('f_fs').value},'Resolutsioon muudetud')};
@@ -506,7 +534,7 @@ async function poll(){
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
   $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;
-  showBat(d.bat);showMic(d.mic);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
+  showBat(d.bat);showMic(d.mic);showPush(d.push);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
  }catch(e){if(e!==0)$('hdr').innerHTML='<span class="dot bad"></span>Seade ei vasta'}
  setTimeout(poll,3000)}
 const BST={MEASURING:'Mõõdan…',ABSENT:'Aku puudub',CHARGING:'⚡ Laeb',FULL:'✓ Täis / laadijal',DISCHARGING:'Tühjeneb',LOW:'⚠ Madal – laadi!',STABLE:'Stabiilne'};

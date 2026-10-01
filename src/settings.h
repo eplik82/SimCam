@@ -31,7 +31,11 @@ struct Data {
     int  micCodec;            // 0 = G.711 µ-law 8 kHz, 1 = L16 16 kHz
     int  afMode;              // 0 = ühekordne, 1 = pidev, 2 = käsitsi (AF_MODE_*)
     int  afPos;               // käsitsi fookuse läätse asend 0…1023
-    bool rtspAudio;           // lisa helirada RTSP voogu        // juhuslik sool sessiooniküpsise jaoks (hex)
+    bool rtspAudio;
+    bool pushEnabled;         // RTSP push serverisse sees
+    char pushUrl[160];        // rtsp://host[:port]/tee (ilma kasutaja/paroolita)
+    char pushUser[48];
+    char pushPass[64];           // lisa helirada RTSP voogu        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 
 void load();                  // loe NVS-ist (puuduvad väärtused = config.h vaikeväärtused)

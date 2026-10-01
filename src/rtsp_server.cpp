@@ -24,6 +24,9 @@
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "esp_random.h"
+#include "mbedtls/md5.h"
+#include "mbedtls/base64.h"
+#include "version.h"
 
 static const char *TAG = "RTSP";
 
@@ -666,7 +669,389 @@ static void serverTask(void *) {
     }
 }
 
+// =============================================================================
+//  RTSP push (ANNOUNCE + RECORD) – seade saadab voo ise serverisse, nt MediaMTX
+// =============================================================================
+//  URL: rtsp://[kasutaja:parool@]host[:port]/tee   (vaikeport 554)
+//  Kõik üle ühe TCP ühenduse (RTP/AVP/TCP interleaved) → töötab NAT/CGNAT taga.
+//  Autentimine: Basic või Digest (MD5), vastavalt serveri 401 vastusele.
+static PushStatus s_push;
+static portMUX_TYPE s_pushMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool s_pushKick = false;
+
+static void pushState(const char *st, const char *err = nullptr) {
+    portENTER_CRITICAL(&s_pushMux);
+    strlcpy(s_push.state, st, sizeof(s_push.state));
+    if (err) strlcpy(s_push.error, err, sizeof(s_push.error));
+    portEXIT_CRITICAL(&s_pushMux);
+}
+
+struct PushUrl {
+    char host[96] = "", path[128] = "/", user[48] = "", pass[64] = "";
+    uint16_t port = 554;
+    char clean[200] = "";                       // URL ilma kasutaja ja paroolita (päringutes)
+};
+
+static void urlUnescape(char *s) {
+    char *o = s;
+    for (; *s; s++) {
+        if (*s == '%' && isxdigit((uint8_t)s[1]) && isxdigit((uint8_t)s[2])) {
+            char h[3] = {s[1], s[2], 0};
+            *o++ = (char)strtol(h, nullptr, 16);
+            s += 2;
+        } else *o++ = *s;
+    }
+    *o = 0;
+}
+
+static bool parsePushUrl(const char *url, PushUrl &u) {
+    if (strncasecmp(url, "rtsp://", 7)) return false;
+    const char *p = url + 7;
+    const char *slash = strchr(p, '/');
+    const char *hostEnd = slash ? slash : p + strlen(p);
+    const char *at = nullptr;
+    for (const char *q = p; q < hostEnd; q++) if (*q == '@') at = q;   // viimane @ enne teed
+    if (at) {
+        const char *colon = (const char *)memchr(p, ':', at - p);
+        size_t ul = (colon ? colon : at) - p;
+        if (ul >= sizeof(u.user)) return false;
+        memcpy(u.user, p, ul); u.user[ul] = 0;
+        if (colon) {
+            size_t pl = at - colon - 1;
+            if (pl >= sizeof(u.pass)) return false;
+            memcpy(u.pass, colon + 1, pl); u.pass[pl] = 0;
+        }
+        urlUnescape(u.user); urlUnescape(u.pass);
+        p = at + 1;
+    }
+    const char *colon = (const char *)memchr(p, ':', hostEnd - p);
+    size_t hl = (colon ? colon : hostEnd) - p;
+    if (!hl || hl >= sizeof(u.host)) return false;
+    memcpy(u.host, p, hl); u.host[hl] = 0;
+    if (colon) {
+        int port = atoi(colon + 1);
+        if (port <= 0 || port > 65535) return false;
+        u.port = port;
+    }
+    strlcpy(u.path, slash ? slash : "/", sizeof(u.path));
+    snprintf(u.clean, sizeof(u.clean), "rtsp://%s:%u%s", u.host, u.port, u.path);
+    return true;
+}
+
+static void md5hex(const char *in, char out[33]) {
+    uint8_t d[16];
+    mbedtls_md5((const unsigned char *)in, strlen(in), d);
+    for (int i = 0; i < 16; i++) sprintf(out + 2 * i, "%02x", d[i]);
+}
+
+// Loe ühe RTSP vastuse päis + keha; vahepealsed '$' interleaved paketid jäetakse vahele
+static int readResponse(int sock, char *buf, size_t cap, uint32_t timeoutMs) {
+    size_t len = 0;
+    uint32_t t0 = millis();
+    while (millis() - t0 < timeoutMs) {
+        // interleaved pakett vastuse alguses → viska ära
+        while (len >= 4 && buf[0] == '$') {
+            size_t pl = 4 + (((uint8_t)buf[2] << 8) | (uint8_t)buf[3]);
+            if (len < pl) break;
+            memmove(buf, buf + pl, len - pl);
+            len -= pl;
+        }
+        buf[len] = 0;
+        char *end = strstr(buf, "\r\n\r\n");
+        if (end && buf[0] != '$') {
+            size_t hdr = end + 4 - buf, body = 0;
+            char cl[12];
+            if (header(buf, "Content-Length", cl, sizeof(cl))) body = atoi(cl);
+            if (len >= hdr + body) {
+                int code = 0;
+                sscanf(buf, "RTSP/%*s %d", &code);
+                return code;
+            }
+        }
+        if (len + 1 >= cap) return -2;
+        fd_set rd; FD_ZERO(&rd); FD_SET(sock, &rd);
+        timeval tv = {0, 200000};
+        int r = select(sock + 1, &rd, nullptr, nullptr, &tv);
+        if (r < 0) return -1;
+        if (r == 0) continue;
+        int n = recv(sock, buf + len, cap - 1 - len, 0);
+        if (n <= 0) return -1;
+        len += n;
+    }
+    return -3;   // ajalõpp
+}
+
+struct PushAuth {
+    bool digest = false, basic = false;
+    char realm[96] = "", nonce[128] = "", opaque[96] = "";
+};
+
+static void parseAuth(const char *resp, PushAuth &a) {
+    // võib olla mitu WWW-Authenticate päist – eelista Digest-it
+    const char *p = resp;
+    while ((p = strcasestr(p, "\nWWW-Authenticate:"))) {
+        p += 18;
+        while (*p == ' ') p++;
+        auto val = [&](const char *key, char *out, size_t n) {
+            const char *k = strcasestr(p, key);
+            const char *eol = strstr(p, "\r\n");
+            if (!k || (eol && k > eol)) return;
+            k += strlen(key);
+            const char *e = strchr(k, '"');
+            if (!e) return;
+            size_t l = min((size_t)(e - k), n - 1);
+            memcpy(out, k, l); out[l] = 0;
+        };
+        if (!strncasecmp(p, "Digest", 6)) {
+            a.digest = true;
+            val("realm=\"", a.realm, sizeof(a.realm));
+            val("nonce=\"", a.nonce, sizeof(a.nonce));
+            val("opaque=\"", a.opaque, sizeof(a.opaque));
+        } else if (!strncasecmp(p, "Basic", 5)) a.basic = true;
+    }
+}
+
+static void authHeader(const PushUrl &u, const PushAuth &a, const char *method, const char *uri,
+                       char *out, size_t n) {
+    out[0] = 0;
+    if (!u.user[0]) return;
+    if (a.digest) {
+        char tmp[320], ha1[33], ha2[33], resp[33];
+        snprintf(tmp, sizeof(tmp), "%s:%s:%s", u.user, a.realm, u.pass); md5hex(tmp, ha1);
+        snprintf(tmp, sizeof(tmp), "%s:%s", method, uri);               md5hex(tmp, ha2);
+        snprintf(tmp, sizeof(tmp), "%s:%s:%s", ha1, a.nonce, ha2);      md5hex(tmp, resp);
+        int l = snprintf(out, n, "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\"",
+                         u.user, a.realm, a.nonce, uri, resp);
+        if (a.opaque[0] && l > 0 && (size_t)l < n) l += snprintf(out + l, n - l, ", opaque=\"%s\"", a.opaque);
+        if (l > 0 && (size_t)l < n) snprintf(out + l, n - l, "\r\n");
+    } else if (a.basic) {
+        char up[120], b64[170];
+        snprintf(up, sizeof(up), "%s:%s", u.user, u.pass);
+        size_t ol = 0;
+        mbedtls_base64_encode((unsigned char *)b64, sizeof(b64), &ol, (const unsigned char *)up, strlen(up));
+        b64[ol] = 0;
+        snprintf(out, n, "Authorization: Basic %s\r\n", b64);
+    }
+}
+
+// Saada päring; 401 korral loe autentimisviis ja proovi üks kord uuesti
+static int pushRequest(Session &s, const PushUrl &u, PushAuth &a, int &cseq, const char *method,
+                       const char *uri, const char *extra, const char *body, char *resp, size_t rcap) {
+    for (int attempt = 0; attempt < 2; attempt++) {
+        char auth[400];
+        authHeader(u, a, method, uri, auth, sizeof(auth));
+        char req[1400];
+        int l = snprintf(req, sizeof(req), "%s %s RTSP/1.0\r\nCSeq: %d\r\nUser-Agent: SimCam/" SIMCAM_VERSION "\r\n%s%s",
+                         method, uri, ++cseq, auth, extra ? extra : "");
+        if (body) l += snprintf(req + l, sizeof(req) - l, "Content-Length: %u\r\n\r\n%s", (unsigned)strlen(body), body);
+        else l += snprintf(req + l, sizeof(req) - l, "\r\n");
+        if (l >= (int)sizeof(req) || !sendAll(s.sock, req, l)) return -1;
+        int code = readResponse(s.sock, resp, rcap, 8000);
+        if (code != 401 || attempt) return code;
+        PushAuth na; parseAuth(resp, na);
+        if (!u.user[0] || (!na.digest && !na.basic)) return 401;
+        a = na;
+    }
+    return -1;
+}
+
+static void pushTask(void *) {
+    char *resp = (char *)malloc(2048);
+    uint32_t backoff = 5000;
+    Camera::Frame fr;
+    for (;;) {
+        const Settings::Data cfg = Settings::get();
+        if (!cfg.pushEnabled || !cfg.pushUrl[0]) {
+            pushState("off");
+            for (int i = 0; i < 20 && !s_pushKick; i++) vTaskDelay(pdMS_TO_TICKS(100));
+            s_pushKick = false;
+            continue;
+        }
+        PushUrl u;
+        if (!parsePushUrl(cfg.pushUrl, u)) {
+            pushState("error", "Vigane URL (rtsp://[kasutaja:parool@]host[:port]/tee)");
+            for (int i = 0; i < 50 && !s_pushKick; i++) vTaskDelay(pdMS_TO_TICKS(100));
+            s_pushKick = false;
+            continue;
+        }
+        if (cfg.pushUser[0]) {                       // eraldi väljad on URL-i omadest tähtsamad
+            strlcpy(u.user, cfg.pushUser, sizeof(u.user));
+            strlcpy(u.pass, cfg.pushPass, sizeof(u.pass));
+        }
+        portENTER_CRITICAL(&s_pushMux);
+        strlcpy(s_push.target, u.clean, sizeof(s_push.target));
+        portEXIT_CRITICAL(&s_pushMux);
+        pushState("connecting");
+        s_pushKick = false;                          // need seaded on juba loetud
+
+        Session *s = new (std::nothrow) Session();
+        bool ok = false;
+        const char *err = nullptr;
+        char errBuf[80];
+        if (s && resp) {
+            // --- TCP ühendus
+            addrinfo hints = {}, *res = nullptr;
+            hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
+            char port[8]; snprintf(port, sizeof(port), "%u", u.port);
+            if (getaddrinfo(u.host, port, &hints, &res) != 0 || !res) err = "Serveri nime ei leitud (DNS)";
+            else {
+                s->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                timeval to = {10, 0};
+                setsockopt(s->sock, SOL_SOCKET, SO_SNDTIMEO, &to, sizeof(to));
+                setsockopt(s->sock, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof(to));
+                if (connect(s->sock, res->ai_addr, res->ai_addrlen) != 0) {
+                    snprintf(errBuf, sizeof(errBuf), "Ühendus serveriga ebaõnnestus (errno %d)", errno);
+                    err = errBuf;
+                }
+            }
+            if (res) freeaddrinfo(res);
+
+            // --- ANNOUNCE / SETUP / RECORD
+            PushAuth auth;
+            int cseq = 0;
+            if (!err) {
+                int one = 1;
+                setsockopt(s->sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+                s->tcp = true;
+                s->v.ssrc = esp_random(); s->v.seq = esp_random() & 0xFFFF;
+                s->a.ssrc = esp_random(); s->a.seq = esp_random() & 0xFFFF;
+                s->audio = Audio::enabled() && cfg.rtspAudio;
+                s->aCodec = cfg.micCodec ? 1 : 0;
+                char sdp[512];
+                int sl = snprintf(sdp, sizeof(sdp),
+                    "v=0\r\no=- %lu 1 IN IP4 0.0.0.0\r\ns=%s\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\n"
+                    "m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=control:track1\r\n",
+                    (unsigned long)esp_random(), cfg.camName);
+                if (s->audio)
+                    snprintf(sdp + sl, sizeof(sdp) - sl, s->aCodec ?
+                             "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 L16/16000/1\r\na=control:track2\r\n" :
+                             "m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=control:track2\r\n");
+                int code = pushRequest(*s, u, auth, cseq, "ANNOUNCE", u.clean,
+                                       "Content-Type: application/sdp\r\n", sdp, resp, 2048);
+                if (code != 200) {
+                    snprintf(errBuf, sizeof(errBuf), code == 401 ? "Vale kasutaja/parool (401)" :
+                             code < 0 ? "Server ei vastanud (ANNOUNCE)" : "Server keeldus: ANNOUNCE %d", code);
+                    err = errBuf;
+                }
+            }
+            char session[80] = "";
+            for (int t = 0; t < (s->audio ? 2 : 1) && !err; t++) {
+                char uri[240], extra[200];
+                snprintf(uri, sizeof(uri), "%s%strack%d", u.clean, u.clean[strlen(u.clean) - 1] == '/' ? "" : "/", t + 1);
+                int l = snprintf(extra, sizeof(extra), "Transport: RTP/AVP/TCP;unicast;interleaved=%d-%d;mode=record\r\n", t * 2, t * 2 + 1);
+                if (session[0]) snprintf(extra + l, sizeof(extra) - l, "Session: %s\r\n", session);
+                int code = pushRequest(*s, u, auth, cseq, "SETUP", uri, extra, nullptr, resp, 2048);
+                if (code != 200) { snprintf(errBuf, sizeof(errBuf), "Server keeldus: SETUP %d", code); err = errBuf; break; }
+                if (!session[0] && header(resp, "Session", session, sizeof(session))) {
+                    char *semi = strchr(session, ';'); if (semi) *semi = 0;
+                }
+                Track &tr = t ? s->a : s->v;
+                tr.chRtp = t * 2; tr.chRtcp = t * 2 + 1; tr.setup = true;
+            }
+            if (!err) {
+                char extra[120];
+                snprintf(extra, sizeof(extra), "Session: %s\r\nRange: npt=0.000-\r\n", session);
+                int code = pushRequest(*s, u, auth, cseq, "RECORD", u.clean, extra, nullptr, resp, 2048);
+                if (code != 200) { snprintf(errBuf, sizeof(errBuf), "Server keeldus: RECORD %d", code); err = errBuf; }
+            }
+
+            // --- Voog
+            if (!err) {
+                ok = true;
+                backoff = 5000;
+                pushState("streaming", "");
+                LOGI(TAG, "Push: saadan → %s%s", u.clean, s->audio ? " (pilt + heli)" : "");
+                Camera::addConsumer();
+                s->aPos = Audio::position();
+                s->aTs = (uint32_t)((uint64_t)Audio::msAt(s->aPos) * audioRate(*s) / 1000);
+                uint32_t lastSeq = 0, t0 = millis(), lastKeep = millis(), statT = millis();
+                uint32_t frames = 0, bytes0 = 0;
+                portENTER_CRITICAL(&s_pushMux);
+                s_push.since = millis();
+                portEXIT_CRITICAL(&s_pushMux);
+                for (;;) {
+                    const Settings::Data c2 = Settings::get();
+                    if (!c2.pushEnabled || strcmp(c2.pushUrl, cfg.pushUrl) || strcmp(c2.pushUser, cfg.pushUser) ||
+                        strcmp(c2.pushPass, cfg.pushPass) || s_pushKick) { s_pushKick = false; err = nullptr; break; }
+                    // serveri andmed (RTCP, vastused) – loe ja viska ära
+                    fd_set rd; FD_ZERO(&rd); FD_SET(s->sock, &rd);
+                    timeval tv = {0, 5000};
+                    int r = select(s->sock + 1, &rd, nullptr, nullptr, &tv);
+                    if (r > 0) {
+                        int n = recv(s->sock, resp, 2047, 0);
+                        if (n <= 0) { err = "Server sulges ühenduse"; break; }
+                    }
+                    if (Camera::waitFrame(fr, lastSeq, 0)) {
+                        lastSeq = fr.seq;
+                        if (!sendJpeg(*s, fr)) { err = "Saatmine ebaõnnestus (võrk?)"; break; }
+                        frames++;
+                    }
+                    if (s->a.setup && Audio::running() && !sendAudio(*s)) { err = "Heli saatmine ebaõnnestus"; break; }
+                    uint32_t now = millis();
+                    if (now - s->lastSr >= 5000) {
+                        s->lastSr = now;
+                        sendSr(*s, s->v, now * 90, now);
+                        if (s->a.setup)
+                            sendSr(*s, s->a, s->aTs + (int32_t)(now - Audio::msAt(s->aPos)) * (int32_t)audioRate(*s) / 1000, now);
+                    }
+                    if (now - lastKeep >= 30000) {          // RTSP keep-alive (vastust ei oota)
+                        lastKeep = now;
+                        char ka[200];
+                        int l = snprintf(ka, sizeof(ka), "OPTIONS %s RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\n\r\n", u.clean, ++cseq, session);
+                        if (!sendAll(s->sock, ka, l)) { err = "Saatmine ebaõnnestus (võrk?)"; break; }
+                    }
+                    if (now - statT >= 2000) {
+                        uint32_t oct = s->v.octets + s->a.octets;
+                        portENTER_CRITICAL(&s_pushMux);
+                        s_push.fps = frames * 1000.0f / (now - statT);
+                        s_push.kBps = (oct - bytes0) / 1.024f / (now - statT);
+                        s_push.sentMB = oct / 1048576.0f;
+                        portEXIT_CRITICAL(&s_pushMux);
+                        frames = 0; bytes0 = oct; statT = now;
+                    }
+                }
+                Camera::removeConsumer();
+                LOGI(TAG, "Push lõppes pärast %lu s%s%s", (unsigned long)((millis() - t0) / 1000), err ? ": " : "", err ? err : "");
+                if (!err) {                                 // seaded muutusid → korralik lõpp
+                    char td[200];
+                    int l = snprintf(td, sizeof(td), "TEARDOWN %s RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\n\r\n", u.clean, ++cseq, session);
+                    sendAll(s->sock, td, l);
+                }
+            }
+        } else err = "Mälu ei jätkunud";
+
+        if (s) {
+            if (s->sock >= 0) { shutdown(s->sock, SHUT_RDWR); close(s->sock); }
+            delete s;
+        }
+        Camera::freeFrame(fr);
+        portENTER_CRITICAL(&s_pushMux);
+        s_push.fps = 0; s_push.kBps = 0; s_push.since = 0;
+        portEXIT_CRITICAL(&s_pushMux);
+        if (err) {
+            if (!ok) LOGW(TAG, "Push: %s – uus katse %lu s pärast", err, (unsigned long)(backoff / 1000));
+            pushState("retry", err);
+            portENTER_CRITICAL(&s_pushMux);
+            s_push.retries++;
+            portEXIT_CRITICAL(&s_pushMux);
+            for (uint32_t w = 0; w < backoff && !s_pushKick; w += 100) vTaskDelay(pdMS_TO_TICKS(100));
+            s_pushKick = false;
+            if (!ok) backoff = min<uint32_t>(backoff * 2, 60000);
+        }
+    }
+}
+
+PushStatus pushStatus() {
+    portENTER_CRITICAL(&s_pushMux);
+    PushStatus p = s_push;
+    portEXIT_CRITICAL(&s_pushMux);
+    return p;
+}
+
+void pushRestart() { s_pushKick = true; }
+
 bool begin() {
+    xTaskCreatePinnedToCore(pushTask, "rtsp_push", 8192, nullptr, 3, nullptr, 1);
     return xTaskCreatePinnedToCore(serverTask, "rtsp_srv", 4096, nullptr, 3, nullptr, 1) == pdPASS;
 }
 

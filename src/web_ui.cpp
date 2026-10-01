@@ -256,6 +256,19 @@ static esp_err_t h_password(httpd_req_t *req) {
 // --- Aku -------------------------------------------------------------------------
 static esp_err_t sendJson(httpd_req_t *req, const String &j);
 
+static String pushJson() {
+    const RtspServer::PushStatus p = RtspServer::pushStatus();
+    char t[420], e[170], j[700];
+    jsonEsc(t, sizeof(t), p.target);
+    jsonEsc(e, sizeof(e), p.error);
+    snprintf(j, sizeof(j),
+        "\"push\":{\"state\":\"%s\",\"target\":\"%s\",\"error\":\"%s\",\"up_s\":%lu,\"retries\":%lu,"
+        "\"fps\":%.1f,\"kBps\":%.1f,\"sent_mb\":%.1f}",
+        p.state, t, e, (unsigned long)(p.since ? (millis() - p.since) / 1000 : 0), (unsigned long)p.retries,
+        p.fps, p.kBps, p.sentMB);
+    return String(j);
+}
+
 static String micJson() {
     const Settings::Data d = Settings::get();
     char j[320];
@@ -337,7 +350,7 @@ static esp_err_t h_status(httpd_req_t *req) {
     jsonEsc(staSsid, sizeof(staSsid), w.staSsid);
     jsonEsc(apSsid, sizeof(apSsid), w.apSsid);
 
-    char buf[2048];
+    static char buf[2800];                     // httpd käsitlejad jooksevad ühes taskis
     int n = snprintf(buf, sizeof(buf),
         "{\"wifi\":{\"sta_en\":%s,\"sta_ok\":%s,\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\","
         "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d,\"ap_temp\":%s},"
@@ -366,7 +379,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
         RtspServer::clients(), (int)s_streams, (Auth::enabled() && cfgd.rtspAuth) ? "true" : "false", ip, RTSP_PORT, RTSP_PATH,
         SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors(),
-        (batJson() + "," + micJson()).c_str());
+        (batJson() + "," + micJson() + "," + pushJson()).c_str());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -590,8 +603,10 @@ static esp_err_t h_favicon(httpd_req_t *req) {
 static esp_err_t h_config_get(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     Settings::Data d = Settings::get();
-    char ss[70], as[70], apn[130], nm[90], buf[1500];
+    char ss[70], as[70], apn[130], nm[90], pu[330], pus[100], buf[2000];
     jsonEsc(ss, sizeof(ss), d.staSsid);
+    jsonEsc(pu, sizeof(pu), d.pushUrl);
+    jsonEsc(pus, sizeof(pus), d.pushUser);
     jsonEsc(nm, sizeof(nm), d.camName);
     jsonEsc(as, sizeof(as), d.apSsid);
     jsonEsc(apn, sizeof(apn), d.apn);
@@ -601,6 +616,7 @@ static esp_err_t h_config_get(httpd_req_t *req) {
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
         "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s,"
         "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"rtsp_audio\":%s,"
+        "\"push_en\":%s,\"push_url\":\"%s\",\"push_user\":\"%s\",\"push_has_pass\":%s,"
         "\"framesize\":%d,\"framesizes\":%s}",
         nm, d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
@@ -608,6 +624,7 @@ static esp_err_t h_config_get(httpd_req_t *req) {
         strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false",
         d.autoUpdate ? "true" : "false",
         d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.rtspAudio ? "true" : "false",
+        d.pushEnabled ? "true" : "false", pu, pus, d.pushPass[0] ? "true" : "false",
         Camera::framesize(), Camera::framesizesJson().c_str());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -622,7 +639,7 @@ static void wifiRestartTask(void *) {
 
 static esp_err_t h_config_post(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
-    char body[512];
+    char body[1100];
     if (!readBody(req, body, sizeof(body))) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
         return ESP_FAIL;
@@ -652,6 +669,18 @@ static esp_err_t h_config_post(httpd_req_t *req) {
             size_t need = (c0 & 0xE0) == 0xC0 ? 2 : (c0 & 0xF0) == 0xE0 ? 3 : 4;
             if (l - (k - 1) < need) d.camName[k - 1] = 0;
         }
+    }
+    {   // RTSP push: URL (ilma kasutaja/paroolita), kasutaja, parool (tühi = muutmata)
+        static char pv[500];                   // httpd käsitlejad jooksevad ühes taskis
+        if (formField(body, "push_en", v, sizeof(v))) d.pushEnabled = v[0] == '1';
+        if (formField(body, "push_url", pv, sizeof(pv))) {
+            char *s = pv; while (*s == ' ') s++;
+            size_t l = strlen(s); while (l && s[l - 1] == ' ') s[--l] = 0;
+            strlcpy(d.pushUrl, s, sizeof(d.pushUrl));
+        }
+        if (formField(body, "push_user", pv, sizeof(pv))) strlcpy(d.pushUser, pv, sizeof(d.pushUser));
+        if (formField(body, "push_pass", pv, sizeof(pv)) && pv[0]) strlcpy(d.pushPass, pv, sizeof(d.pushPass));
+        if (formField(body, "push_pass_clear", v, sizeof(v)) && v[0] == '1') d.pushPass[0] = 0;
     }
     if (formField(body, "sta_en", v, sizeof(v))) d.staEnabled = v[0] == '1';
     if (formField(body, "sta_ssid", v, sizeof(v))) strlcpy(d.staSsid, v, sizeof(d.staSsid));
@@ -685,6 +714,9 @@ static esp_err_t h_config_post(httpd_req_t *req) {
              reboot ? "true" : "false", apForced ? "true" : "false");
     httpd_resp_sendstr(req, resp);
     LOGI(TAG, "Seaded muudetud veebiliidesest%s", reboot ? " (LTE muutus → vajab taaskäivitust)" : "");
+    if (before.pushEnabled != d.pushEnabled || strcmp(before.pushUrl, d.pushUrl) ||
+        strcmp(before.pushUser, d.pushUser) || strcmp(before.pushPass, d.pushPass))
+        RtspServer::pushRestart();
     if (before.micEnabled != d.micEnabled || before.micGain != d.micGain)
         Audio::apply();
     // WiFi taaskäivitus ainult siis, kui WiFi/hotspoti seaded tegelikult muutusid

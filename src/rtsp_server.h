@@ -12,10 +12,24 @@
 //  aeglane, jäetakse vahepealsed kaadrid lihtsalt vahele (puhvrit ei kogune).
 // =============================================================================
 #pragma once
+#include <stdint.h>
 
 namespace RtspServer {
 
-bool begin();      // käivitab kuulava taski (töötab ka enne LTE ühendust)
+bool begin();      // käivitab kuulava taski ja push-taski (töötab ka enne LTE ühendust)
 int clients();     // aktiivsete RTSP klientide arv
+
+// RTSP push (ANNOUNCE/RECORD) – seade saadab voo ise serverisse (nt MediaMTX).
+// Seaded: Settings pushEnabled + pushUrl (rtsp://[kasutaja:parool@]host[:port]/tee).
+struct PushStatus {
+    char  state[12] = "off";   // off / connecting / streaming / retry / error
+    char  error[80] = "";
+    char  target[200] = "";    // URL ilma kasutaja/paroolita
+    uint32_t since = 0;        // millis() voo algusest (0 = ei voogesita)
+    uint32_t retries = 0;
+    float fps = 0, kBps = 0, sentMB = 0;
+};
+PushStatus pushStatus();
+void pushRestart();        // seaded muutusid → ühenda kohe uuesti
 
 }  // namespace RtspServer

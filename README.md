@@ -167,6 +167,35 @@ LilyGO skeemi `T_SIMCAM-V1.3` ja näidete järgi (`src/config.h`):
 mille püsivara laaditakse SCCB kaudu (teek
 [0015/ESP32-OV5640-AF](https://github.com/0015/ESP32-OV5640-AF)).
 
+## RTSP push (serverisse)
+
+Seade saadab voo ise RTSP serverisse (`ANNOUNCE` → `SETUP` → `RECORD`, kõik üle ühe
+TCP ühenduse). Sobib mobiilivõrku, kus seadmele väljast ligi ei pääse (CGNAT):
+vaatajad ühenduvad serveriga, mitte seadmega. Ühtlasi talub server palju vaatajaid.
+
+⚙ → **📡 RTSP push**: „Push sees", serveri aadress `rtsp://server:8554/tee`,
+kasutaja ja parool (Basic või Digest – vastavalt serverile). Olek, fps, kB/s ja
+viimane viga on samal kaardil. Katkestuse korral uus katse 5 s … 60 s pärast.
+
+Testitud **MediaMTX** v1.21 serveriga (Basic ja Digest; pilt M-JPEG + heli G.711/L16):
+
+```yaml
+# mediamtx.yml (lõik)
+authInternalUsers:
+- user: simcam          # seadme push-kasutaja
+  pass: <parool>
+  permissions: [{action: publish}]
+- user: any             # vaatajad
+  permissions: [{action: read}]
+```
+
+Vaatamine: `vlc rtsp://server:8554/tee`. YouTube/Twitchi jaoks saab server voo
+ümber kodeerida, nt `ffmpeg -rtsp_transport tcp -i rtsp://server:8554/tee -c:v libx264
+-preset veryfast -c:a aac -f flv rtmp://a.rtmp.youtube.com/live2/<võti>`
+(RTMP otse seadmest pole võimalik – see nõuab H.264-t, mida ESP32-S3 ei jõua kodeerida).
+
+**NB:** push hoiab kaamera ja mikrofoni pidevalt töös (aku säästurežiim ei rakendu).
+
 ## Voo vaatamine
 
 ```bash

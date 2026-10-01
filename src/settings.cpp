@@ -39,6 +39,8 @@ static void defaults(Data &d) {
     d.micCodec = 0;
     d.rtspAudio = true;
     d.afMode = AF_MODE_DEFAULT;
+    d.pushEnabled = false;
+    d.pushUrl[0] = d.pushUser[0] = d.pushPass[0] = 0;
     d.afPos = AF_POS_DEFAULT;
 }
 
@@ -85,6 +87,10 @@ void load() {
         d.micCodec = p.getInt("mic_codec", d.micCodec) == 1 ? 1 : 0;
         d.rtspAudio = p.getBool("rtsp_audio", d.rtspAudio);
         d.afMode = constrain(p.getInt("af_mode", d.afMode), 0, 2);
+        d.pushEnabled = p.getBool("push_en", d.pushEnabled);
+        if (p.isKey("push_url")) p.getString("push_url", d.pushUrl, sizeof(d.pushUrl));
+        if (p.isKey("push_user")) p.getString("push_user", d.pushUser, sizeof(d.pushUser));
+        if (p.isKey("push_pass")) p.getString("push_pass", d.pushPass, sizeof(d.pushPass));
         d.afPos = constrain(p.getInt("af_pos", d.afPos), 0, 1023);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
@@ -124,6 +130,7 @@ bool save(const Data &din) {
     if (d.micGain < 0 || d.micGain > 40 || (d.micCodec != 0 && d.micCodec != 1)) return false;
     for (const char *c = d.simPin; *c; c++) if (*c < '0' || *c > '9') return false;   // PIN = numbrid
     if (!d.camName[0]) return false;
+    if (d.pushUrl[0] && strncasecmp(d.pushUrl, "rtsp://", 7)) return false;
     Preferences p;
     if (!p.begin(NS, false)) return false;
     p.putString("cam_name", d.camName);
@@ -150,6 +157,10 @@ bool save(const Data &din) {
     p.putInt("mic_codec", d.micCodec);
     p.putBool("rtsp_audio", d.rtspAudio);
     p.putInt("af_mode", d.afMode);
+    p.putBool("push_en", d.pushEnabled);
+    p.putString("push_url", d.pushUrl);
+    p.putString("push_user", d.pushUser);
+    p.putString("push_pass", d.pushPass);
     p.putInt("af_pos", d.afPos);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
