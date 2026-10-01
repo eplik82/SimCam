@@ -12,6 +12,7 @@ release'ist (FOTA)**.
 | MJPEG voog    | `http://<IP>/stream`                       |
 | Hetktõmmis    | `http://<IP>/capture`                      |
 | Olek (JSON)   | `http://<IP>/api/status`                   |
+| Logi          | `http://<IP>/log` (tekstina `http://<IP>/api/log`) |
 
 > ⚠️ **MikroTik R11e-LTE selle plaadiga EI tööta ja võib rikki minna** –
 > vt [Modemi ühilduvus](#modemi-ühilduvus).
@@ -39,6 +40,9 @@ release'ist (FOTA)**.
   ise sisse (ja pärast ühenduse taastumist välja).
 * **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel või soovi korral
   automaatselt; eelmine versioon taastatakse, kui uus ei käivitu.
+* **Logi veebiliideses** (⚙ → 📄 Logi): seadme logi reaalajas, filtreerimine
+  taseme ja teksti järgi, allalaadimine; pärast kokkujooksmist ka **eelmise
+  käivituse viimased read** ja taaskäivituse põhjus – vt [Logi](#logi).
 * Kõik seaded (WiFi, hotspot, LTE, parool, pööre) salvestatakse seadme NVS-i –
   **lähtekoodis pole paroole ega operaatori andmeid**.
 
@@ -77,8 +81,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.4.0
+git push origin v1.4.0
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -156,6 +160,27 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
   `agc_gain`, `brightness`, `hmirror`, `vflip`, `framesize`, `quality`, `ir`.
   Ilma parameetriteta tagastab kõik seaded.
 
+## Logi
+
+Seadme logi näeb ilma USB-kaablita: ⚙ → **📄 Logi** (`http://<IP>/log`).
+
+* **See käivitus** – viimased ~64 kB logiridu (PSRAM-is ringpuhver, vanemad read
+  kirjutatakse üle). Uued read tulevad juurde iga 2 s järel; ⏸ peatab.
+* **Eelmine käivitus** – viimased ~3 kB eelmise käivituse logist. Hoitakse RTC
+  mälus, mis jääb alles tarkvaralise taaskäivituse, püsivara uuenduse,
+  kokkujooksmise ja watchdogi korral (toite kadumisel kustub).
+* **Taaskäivituse põhjus** (toide, tarkvaraline, KOKKUJOOKSMINE, brownout …) ning
+  hoiatuste/vigade arv on näha ka seadete lehel (⚙ → Süsteem).
+* Filtrid: kõik / hoiatused + vead / ainult vead ning tekstiotsing. 🕒 näitab ridade
+  juures kellaaega (arvutatud brauseri kellast, seadmel endal kella pole).
+* **⬇ Laadi alla** salvestab logi failina (`simcam-<versioon>-logi.log`).
+* Logisse jõuavad kõigi moodulite read (`MAIN`, `CAM`, `WIFI`, `LTE`, `RTSP`, `WEB`,
+  `OTA` …) ja ESP-IDF komponentide hoiatused/vead (`IDF`). Sama logi tuleb endiselt
+  ka USB Seriali (115200).
+* Skriptidele: `curl -u admin:<parool> "http://<IP>/api/log"` (kogu logi),
+  `?since=<N>` – ainult uued read (N = eelmise vastuse päis `X-Log-Next`),
+  `?prev=1` – eelmine käivitus, `POST /api/log/clear` – tühjenda.
+
 ## Ribalaius (LTE)
 
 Modem on ESP32-ga ühendatud **UART-i** kaudu, seega piirab läbilaskevõimet UART:
@@ -217,6 +242,7 @@ Allikad: [MikroTik R11e-LTE](https://mikrotik.com/product/r11e_lte),
 | `SIM on PUK lukus!` | ava SIM telefonis PUK-koodiga |
 | LTE IP pole see, mida ootasid | APN vale või staatilise IP teenus pole SIM-ile aktiveeritud |
 | FOTA: „GitHubiga ei saanud ühendust" | seadmel pole internetti (ainult hotspot ei piisa) |
+| Seade taaskäivitub ise | ⚙ → 📄 Logi → „Eelmine käivitus": põhjus ja viimased read enne taaskäivitust |
 | Brownout LTE ühendumisel | modem tarbib kuni 2 A tippe – kasuta korralikku 5 V toidet |
 
 ## Projekti struktuur
@@ -238,6 +264,6 @@ SimCam/
     ├── ota.*                 FOTA GitHubi release'ist + tagasipööramine
     ├── settings.*            NVS seaded
     ├── auth.*                parool, sessiooniküpsis, HTTP Basic
-    └── log.h                 logimakrod (USB Serial 115200)
+    └── log.*                 logi: USB Serial + mälupuhver (/log) + eelmise käivituse logi (RTC)
 ```
 

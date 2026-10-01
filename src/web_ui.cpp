@@ -241,7 +241,7 @@ static esp_err_t h_status(httpd_req_t *req) {
     jsonEsc(staSsid, sizeof(staSsid), w.staSsid);
     jsonEsc(apSsid, sizeof(apSsid), w.apSsid);
 
-    char buf[1900];
+    char buf[2048];
     int n = snprintf(buf, sizeof(buf),
         "{\"wifi\":{\"sta_en\":%s,\"sta_ok\":%s,\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\","
         "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d,\"ap_temp\":%s},"
@@ -253,7 +253,8 @@ static esp_err_t h_status(httpd_req_t *req) {
         "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d,\"rot_ms\":%.0f},"
         "\"sys\":{\"uptime\":%llu,\"heap_free\":%u,\"heap_total\":%u,\"heap_min\":%u,"
         "\"psram_free\":%u,\"psram_total\":%u,\"temp\":%.1f,\"rtsp_clients\":%d,"
-        "\"http_streams\":%d,\"rtsp_auth\":%s,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\"}}",
+        "\"http_streams\":%d,\"rtsp_auth\":%s,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\","
+        "\"reset\":\"%s\",\"log_w\":%lu,\"log_e\":%lu}}",
         w.staEnabled ? "true" : "false", w.staConnected ? "true" : "false", staSsid, w.staIp,
         w.staRssi, w.channel, w.apEnabled ? "true" : "false", apSsid, w.apIp, w.apClients, w.apTemp ? "true" : "false",
         LTE::enabled() ? "true" : "false",
@@ -268,7 +269,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(),
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
         RtspServer::clients(), (int)s_streams, (Auth::enabled() && cfgd.rtspAuth) ? "true" : "false", ip, RTSP_PORT, RTSP_PATH,
-        SIMCAM_VERSION);
+        SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -368,6 +369,76 @@ static esp_err_t sendJson(httpd_req_t *req, const String &j) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, j.c_str(), j.length());
+}
+
+// --- Logi ------------------------------------------------------------------------
+static esp_err_t h_log_page(httpd_req_t *req) {
+    if (!authorizedPage(req)) return ESP_OK;
+    return sendPage(req, LOG_HTML);
+}
+
+// GET /api/log[?since=N][&prev=1][&dl=1] – tekst; X-Log-Next = järgmine `since`
+static esp_err_t h_log(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    char q[64] = "", v[16];
+    httpd_req_get_url_query_str(req, q, sizeof(q));
+    bool prev = httpd_query_key_value(q, "prev", v, sizeof(v)) == ESP_OK && v[0] == '1';
+    bool dl   = httpd_query_key_value(q, "dl", v, sizeof(v)) == ESP_OK && v[0] == '1';
+    uint32_t since = 0;
+    if (httpd_query_key_value(q, "since", v, sizeof(v)) == ESP_OK) since = strtoul(v, nullptr, 10);
+
+    char hNext[12], hUp[12], hW[12], hE[12], hDisp[80];
+    uint32_t end = Log::position();
+    if (since > end) since = 0;                // seade on vahepeal taaskäivitunud
+    snprintf(hNext, sizeof(hNext), "%lu", (unsigned long)end);
+    snprintf(hUp, sizeof(hUp), "%lu", (unsigned long)millis());
+    snprintf(hW, sizeof(hW), "%lu", (unsigned long)Log::warnings());
+    snprintf(hE, sizeof(hE), "%lu", (unsigned long)Log::errors());
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Log-Next", hNext);
+    httpd_resp_set_hdr(req, "X-Uptime-Ms", hUp);
+    httpd_resp_set_hdr(req, "X-Log-Warn", hW);
+    httpd_resp_set_hdr(req, "X-Log-Err", hE);
+    httpd_resp_set_hdr(req, "X-Reset-Reason", Log::resetCode());
+    if (dl) {
+        snprintf(hDisp, sizeof(hDisp), "attachment; filename=\"simcam-%s-%s.log\"",
+                 SIMCAM_VERSION, prev ? "eelmine" : "logi");
+        httpd_resp_set_hdr(req, "Content-Disposition", hDisp);
+    }
+
+    if (prev) {
+        size_t n;
+        const char *p = Log::previous(&n);
+        return httpd_resp_send(req, p, n);
+    }
+    if (dl) {
+        char head[160];
+        int n = snprintf(head, sizeof(head), "# SimCam %s, tööaeg %lu s, taaskäivituse põhjus: %s\n",
+                         SIMCAM_VERSION, (unsigned long)(millis() / 1000), Log::resetReason());
+        httpd_resp_send_chunk(req, head, n);
+    }
+    const size_t CH = 4096;
+    char *buf = (char *)malloc(CH);
+    if (!buf) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "mälu");
+    uint32_t pos = since;
+    while (pos < end) {
+        uint32_t next;
+        size_t want = end - pos < CH ? end - pos : CH;
+        size_t n = Log::read(pos, buf, want, &next);
+        if (!n) break;
+        if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) { free(buf); return ESP_FAIL; }
+        pos = next;
+    }
+    free(buf);
+    return httpd_resp_send_chunk(req, nullptr, 0);
+}
+
+static esp_err_t h_log_clear(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    Log::clear();
+    LOGI(TAG, "Logi tühjendati veebiliidesest");
+    return sendJson(req, "{\"ok\":true}");
 }
 
 static esp_err_t h_ota(httpd_req_t *req) {
@@ -652,6 +723,9 @@ bool begin() {
         {"/api/view",   HTTP_GET,  h_view,    nullptr},
         {"/api/ota/check",  HTTP_POST, h_ota_check,  nullptr},
         {"/api/ota/update", HTTP_POST, h_ota_update, nullptr},
+        {"/log",        HTTP_GET,  h_log_page, nullptr},
+        {"/api/log",    HTTP_GET,  h_log,     nullptr},
+        {"/api/log/clear", HTTP_POST, h_log_clear, nullptr},
     };
     for (const auto &u : uris) httpd_register_uri_handler(s_server, &u);
     httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, h_notfound);

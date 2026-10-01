@@ -2,7 +2,7 @@
 //  SimCam – LilyGO T-SIMCAM (ESP32-S3) LTE kaamera püsivara
 // =============================================================================
 //  Käivitusjärjestus:
-//   1. USB Serial logi (115200)
+//   1. Logi: USB Serial (115200) + mälupuhver (veebiliideses ⚙ → Logi)
 //   2. Plaadi perifeeria toide (GPIO1 = HIGH)
 //   3. Kaamera + autofookus (Camera_Manager)
 //   4. RTSP server :554 ja veebiliides :80 (kuulavad kõigil liidestel; hakkavad
@@ -32,6 +32,7 @@ void setup() {
     // Oota kuni 3 s, et USB CDC jõuaks arvutiga ühenduda (logid ei kao)
     uint32_t t0 = millis();
     while (!Serial && millis() - t0 < 3000) delay(10);
+    Log::begin();                     // logipuhver (veebis /log) + eelmise käivituse logi
 
     LOGI(TAG, "==============================================");
     LOGI(TAG, " SimCam – LilyGO T-SIMCAM LTE kaamera");

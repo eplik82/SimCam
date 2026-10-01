@@ -2,6 +2,7 @@
 //  Veebiliidese lehed (HTML + CSS + JS) – talletatud flash-mälus (PROGMEM)
 //   INDEX_HTML    – vaade: ainult kaamerapilt + nupud
 //   SETTINGS_HTML – olek, WiFi/LTE seaded, parool, taaskäivitus
+//   LOG_HTML      – seadme logi (jooksev + eelmine käivitus)
 //   LOGIN_HTML    – sisselogimine
 //   COMMON_CSS    – ühine stiil (/style.css)
 // =============================================================================
@@ -137,6 +138,12 @@ label.chk input{width:18px;height:18px;margin:0;accent-color:var(--acc)}
 hr{border:0;border-top:1px solid var(--line);margin:4px 0}
 .ipbox{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:14px}
 .ipbox b{font-variant-numeric:tabular-nums}
+.nets{display:none;grid-template-columns:minmax(0,1fr);gap:4px;max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:4px}
+.nets.show{display:grid}
+.nets button{box-sizing:border-box;width:100%;min-width:0;justify-content:space-between;gap:10px;border:0;border-radius:8px;padding:11px 10px;text-align:left}
+.nets button:hover,.nets button:active{background:var(--bg)}
+.nets button>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.nets small{color:var(--mut);flex:none;white-space:nowrap}
 </style></head><body>
 <header><a class="btn" href="/">← Vaade</a><h1>Seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
 <main>
@@ -164,7 +171,9 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0}
   <div class="row"><span>PSRAM vaba</span><span id="s_ps">-</span></div>
   <div class="row"><span>Temperatuur</span><span id="s_t">-</span></div>
   <div class="row"><span>Püsivara</span><span id="s_fw">-</span></div>
-  <div class="btns" style="margin-top:10px"><button class="dng" id="bReboot">Taaskäivita</button><a class="btn" href="/logout">Logi välja</a></div>
+  <div class="row"><span>Viimane käivitus</span><span id="s_rst">-</span></div>
+  <div class="row"><span>Logi</span><span id="s_log">-</span></div>
+  <div class="btns" style="margin-top:10px"><a class="btn" href="/log">📄 Logi</a><button class="dng" id="bReboot">Taaskäivita</button><a class="btn" href="/logout">Logi välja</a></div>
  </section>
 </div>
 
@@ -173,8 +182,8 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0}
  <section class="card"><h2>WiFi võrk</h2>
   <form id="fWifi" autocomplete="off">
    <label class="chk"><input type="checkbox" id="f_sta_en"> Ühendu WiFi võrku</label>
-   <label>Võrgu nimi (SSID)<span class="inl"><input type="text" id="f_sta_ssid" list="ssids" maxlength="32"><button type="button" id="bScan">Otsi</button></span></label>
-   <datalist id="ssids"></datalist>
+   <label>Võrgu nimi (SSID)<span class="inl"><input type="text" id="f_sta_ssid" maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="button" id="bScan">Otsi võrke</button></span></label>
+   <div class="nets" id="ssids"></div>
    <label>Parool<input type="password" id="f_sta_pass" maxlength="64" placeholder="(muutmata)"></label>
    <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
@@ -265,11 +274,18 @@ async function save(fields,msg){
   if(!d.ok){toast(d.error||'Viga');return false}
   let t=msg||'Salvestatud';if(d.ap_forced)t+=' – hotspot jääb sisse (WiFi ja LTE on väljas)';if(d.reboot)t+=' – rakendub pärast taaskäivitust';
   toast(t);loadCfg();return true}catch(e){if(e!==0)toast('Salvestatud – ühendus võis hetkeks katkeda');return false}}
-$('bScan').onclick=async()=>{const b=$('bScan');b.disabled=true;b.textContent='…';
- try{const l=await (await api('/api/scan',{cache:'no-store'})).json();l.sort((a,b)=>b.rssi-a.rssi);
-  $('ssids').innerHTML=l.map(n=>`<option value="${n.ssid.replace(/"/g,'&quot;')}">${n.rssi} dBm${n.enc?' 🔒':''}</option>`).join('');
-  toast(l.length+' võrku leitud');$('f_sta_ssid').focus()}catch(e){toast('Otsing ebaõnnestus')}
- b.disabled=false;b.textContent='Otsi'};
+// Võrkude valik nupuloendina: <datalist> ei tööta telefonides (Android/iOS) korralikult
+$('bScan').onclick=async()=>{const b=$('bScan'),box=$('ssids');b.disabled=true;b.textContent='Otsin…';
+ try{const l=await (await api('/api/scan',{cache:'no-store'})).json();const best={};
+  l.forEach(n=>{if(n.ssid&&(!best[n.ssid]||n.rssi>best[n.ssid].rssi))best[n.ssid]=n});
+  const nets=Object.values(best).sort((a,b)=>b.rssi-a.rssi),wq=q=>q>=-55?4:q>=-65?3:q>=-75?2:q>=-85?1:0;
+  box.innerHTML='';
+  nets.forEach(n=>{const e=document.createElement('button');e.type='button';
+   e.innerHTML=`<span></span><small>${bars(wq(n.rssi))}${n.rssi} dBm${n.enc?' 🔒':''}</small>`;e.firstChild.textContent=n.ssid;
+   e.onclick=()=>{$('f_sta_ssid').value=n.ssid;box.classList.remove('show');if(n.enc)$('f_sta_pass').focus()};box.appendChild(e)});
+  box.classList.toggle('show',nets.length>0);toast(nets.length?nets.length+' võrku leitud – vali loendist':'Ühtegi võrku ei leitud')}
+ catch(e){if(e!==0)toast('Otsing ebaõnnestus')}
+ b.disabled=false;b.textContent='Otsi võrke'};
 $('fWifi').onsubmit=e=>{e.preventDefault();save({sta_en:$('f_sta_en').checked?1:0,sta_ssid:$('f_sta_ssid').value,sta_pass:$('f_sta_pass').value},'WiFi salvestatud').then(o=>{if(o)$('f_sta_pass').value=''})};
 $('fAp').onsubmit=e=>{e.preventDefault();const p=$('f_ap_pass').value;if(p&&p.length<8){toast('Parool peab olema vähemalt 8 märki');return}
  save({ap_en:$('f_ap_en').checked?1:0,ap_ssid:$('f_ap_ssid').value,ap_pass:p},'Hotspot salvestatud').then(o=>{if(o)$('f_ap_pass').value=''})};
@@ -321,6 +337,7 @@ async function poll(){
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
   $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;
+  $('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
  }catch(e){if(e!==0)$('hdr').innerHTML='<span class="dot bad"></span>Seade ei vasta'}
  setTimeout(poll,3000)}
 loadCfg();poll();otaPoll();
@@ -346,3 +363,75 @@ h1{margin:0;font-size:20px}.err{color:var(--bad);font-size:14px;min-height:1em}
 </form>
 <script>if(location.search.indexOf('e=1')>=0)document.getElementById('err').textContent='Vale parool';</script>
 </body></html>)HTML";
+
+// -----------------------------------------------------------------------------
+//  Logi (jooksev + eelmine käivitus)
+// -----------------------------------------------------------------------------
+static const char LOG_HTML[] PROGMEM = R"HTML(<!doctype html>
+<html lang="et"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SimCam – logi</title><link rel="stylesheet" href="/style.css">
+<style>
+body{display:flex;flex-direction:column;height:100vh;height:100dvh}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{font-size:18px;margin:0 8px 0 0}
+.sp{flex:1}
+select{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;padding:8px 10px}
+input[type=search]{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;padding:8px 10px;max-width:180px;min-width:0;flex:1}
+#info{font-size:13px;color:var(--mut);padding:6px 16px;border-bottom:1px solid var(--line)}
+#log{flex:1;overflow:auto;margin:0;padding:10px 16px;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+#log .W{color:var(--warn)}#log .E{color:var(--bad);font-weight:600}#log .t{color:var(--mut)}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+</style></head><body>
+<header><a class="btn" href="/settings">← Seaded</a><h1>Logi</h1>
+ <select id="src"><option value="cur">See käivitus</option><option value="prev">Eelmine käivitus</option></select>
+ <select id="lvl"><option value="">Kõik</option><option value="WE">Hoiatused + vead</option><option value="E">Ainult vead</option></select>
+ <input type="search" id="q" placeholder="Filtreeri…">
+ <span class="sp"></span>
+ <button id="bClock" title="Näita kellaaega (brauseri kellast)">🕒</button>
+ <button id="bPause">⏸ Peata</button>
+ <a class="btn" id="bDl" href="/api/log?dl=1">⬇ Laadi alla</a>
+ <button class="dng" id="bClr">Tühjenda</button>
+</header>
+<div id="info">…</div>
+<pre id="log"></pre>
+<div class="toast" id="toast"></div>
+<script>
+const $=id=>document.getElementById(id);
+function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2500)}
+async function api(u,o){const r=await fetch(u,o);if(r.status==401){location.href='/login';throw 0}return r}
+let lines=[],pos=0,paused=false,clock=false,up0=0,t0=0,timer=0;
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const RE=/^\[\s*(\d+)\]\[([IWE])\]/;
+function stamp(ms){if(!clock||!up0)return null;const d=new Date(t0-(up0-ms));
+ return d.toLocaleDateString('et-EE',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('et-EE')}
+function fmt(l){const m=RE.exec(l);let h=esc(l);
+ if(m){const s=stamp(+m[1]);if(s)h=`<span class="t">${s}</span> `+h;return `<span class="${m[2]}">${h}</span>`}return h}
+function render(){const lv=$('lvl').value,q=$('q').value.toLowerCase(),box=$('log');
+ const atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<40;
+ box.innerHTML=lines.filter(l=>{if(lv){const m=RE.exec(l);if(!m||lv.indexOf(m[2])<0)return false}return !q||l.toLowerCase().includes(q)}).map(fmt).join('\n');
+ if(atEnd||!paused)box.scrollTop=box.scrollHeight}
+const RST={POWERON:'toide sisse',EXT:'väline reset',SW:'tarkvaraline (taaskäivitus/uuendus)',PANIC:'KOKKUJOOKSMINE (panic)',
+ INT_WDT:'KOKKUJOOKSMINE (katkestuse watchdog)',TASK_WDT:'KOKKUJOOKSMINE (taski watchdog)',WDT:'KOKKUJOOKSMINE (watchdog)',
+ DEEPSLEEP:'ärkamine süvaunest',BROWNOUT:'TOITEPINGE LANGUS (brownout)',OTHER:'teadmata'};
+function info(r,extra){const w=r.headers.get('X-Log-Warn'),e=r.headers.get('X-Log-Err');
+ $('info').textContent=`Taaskäivituse põhjus: ${RST[r.headers.get('X-Reset-Reason')]||'-'} · hoiatusi ${w||0}, vigu ${e||0}`+(extra||'')}
+async function load(){clearTimeout(timer);const prev=$('src').value=='prev';
+ try{const r=await api(prev?'/api/log?prev=1':'/api/log?since='+pos,{cache:'no-store'});
+  const up=+r.headers.get('X-Uptime-Ms');if(up){up0=up;t0=Date.now()}
+  const txt=await r.text();
+  if(prev){lines=txt?txt.replace(/\n$/,'').split('\n'):[];info(r,' · eelmise käivituse viimased read (alles ainult tarkvaralise taaskäivituse/krahhi järel)');
+   if(!txt)$('log').textContent='Eelmise käivituse logi pole (seade sai vahepeal toite).';else render();return}
+  const nx=+r.headers.get('X-Log-Next');if(nx<pos){lines=[]}pos=nx;
+  if(txt){lines=lines.concat(txt.replace(/\n$/,'').split('\n'));if(lines.length>3000)lines=lines.slice(-3000);render()}
+  info(r)}catch(e){if(e!==0)$('info').textContent='Seade ei vasta'}
+ if(!paused)timer=setTimeout(load,2000)}
+$('src').onchange=()=>{lines=[];pos=0;$('log').textContent='';
+ $('bDl').href=$('src').value=='prev'?'/api/log?prev=1&dl=1':'/api/log?dl=1';load()};
+$('lvl').onchange=render;$('q').oninput=render;
+$('bClock').onclick=()=>{clock=!clock;$('bClock').classList.toggle('on',clock);render()};
+$('bPause').onclick=()=>{paused=!paused;$('bPause').textContent=paused?'▶ Jätka':'⏸ Peata';if(!paused)load()};
+$('bClr').onclick=async()=>{if(!confirm('Tühjendada jooksev logi?'))return;
+ try{await api('/api/log/clear',{method:'POST'});lines=[];$('log').textContent='';toast('Logi tühjendatud');load()}catch(e){}};
+load();
+</script></body></html>)HTML";
