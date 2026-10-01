@@ -51,8 +51,8 @@ release'ist (FOTA)**.
 
 ## Esmane seadistamine
 
-1. Laadi püsivara plaadile (vt [Paigaldus](#paigaldus)) või võta valmis fail
-   [Releases](../../releases) lehelt.
+1. Paigalda püsivara: Windowsi `simcam-flasher-<versioon>.exe` või brauseris
+   <https://eplik82.github.io/SimCam/> (vt [Paigaldus](#paigaldus)).
 2. Ühenda telefon WiFi võrku **SimCam**, parool **`simcam2026`**.
    Kaamera leht avaneb ise (kui mitte, ava `http://4.3.2.1/`).
 3. Logi sisse parooliga **`simcam`**.
@@ -84,15 +84,45 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.5.0
-git push origin v1.5.0
+git tag v1.5.1
+git push origin v1.5.1
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
 sildist) ja loob release'i failidega `simcam-firmware.bin` (FOTA),
-`simcam-factory.bin` (esmane USB-laadimine aadressile 0x0) ja `SHA256SUMS.txt`.
+`simcam-factory.bin` (esmane USB-laadimine aadressile 0x0),
+`simcam-flasher-<versioon>.exe` (Windowsi paigaldaja) ja `SHA256SUMS.txt`
+ning avaldab brauseri-paigalduslehe (GitHub Pages). Sildi asemel võib kasutada ka
+Actions → Firmware → Run workflow (sisend `tag`).
 
 ## Paigaldus
+
+### Uus seade – ilma arenduskeskkonnata
+
+**Windows (.exe):** laadi [Releases](../../releases/latest) lehelt
+`simcam-flasher-<versioon>.exe`, ühenda T-SIMCAM USB-C kaabliga ja käivita fail.
+Programm leiab plaadi pordi ise (Espressif USB, VID `303A`), küsib, kas flash
+kustutada (uuel plaadil: jah), ja paigaldab püsivara (see on .exe-s sees).
+Allkirjastamata programmi puhul näitab Windows SmartScreen hoiatust →
+„Rohkem teavet" → „Käivita ikkagi".
+
+**Brauserist (Chrome/Edge):** <https://eplik82.github.io/SimCam/> → „Paigalda SimCam"
+→ vali plaadi port → „Erase device" (uuel plaadil). Kasutab
+[ESP Web Tools](https://esphome.github.io/esp-web-tools/)-i (Web Serial); leht
+avaldatakse automaatselt koos release'iga, kui release tehakse `main` harust või
+sildist ja repos on Pages sisse lülitatud (Settings → Pages → Source:
+**GitHub Actions**).
+
+**macOS / Linux:** `pip install esptool==4.8.1` ja
+`python tools/flasher/simcam_flasher.py simcam-factory.bin` (või otse
+`esptool.py --chip esp32s3 write_flash 0x0 simcam-factory.bin`).
+
+Kui plaat ei ilmu pordina või ühendus ei õnnestu: hoia **BOOT** all, vajuta
+**RESET**, lase BOOT lahti ja proovi uuesti; pärast paigaldust vajuta RESET.
+Edasi: [Esmane seadistamine](#esmane-seadistamine); hilisemad uuendused tulevad
+üle võrgu (FOTA).
+
+### Lähtekoodist (PlatformIO)
 
 Vajalik: [PlatformIO](https://platformio.org/) (VS Code laiendus või `pip install platformio`).
 Esimesel ehitusel laaditakse alla pioarduino platvorm ja Arduino-ESP32 3.x.
@@ -100,14 +130,6 @@ Esimesel ehitusel laaditakse alla pioarduino platvorm ja Arduino-ESP32 3.x.
 ```bash
 pio run -t upload          # kompileeri + laadi USB kaudu
 pio device monitor         # logi 115200 baud
-```
-
-Kui plaat ei ilmu COM-pordina: hoia **BOOT** all, vajuta **RESET**, lase BOOT lahti.
-
-Valmis failiga (ilma PlatformIO-ta):
-
-```bash
-esptool.py --chip esp32s3 write_flash 0x0 simcam-factory.bin
 ```
 
 ## Riistvara ja viigud
@@ -313,6 +335,8 @@ Sierra Wireless *AirPrime MC7304 Product Technical Specification*,
 SimCam/
 ├── platformio.ini            PlatformIO (pioarduino, Arduino-ESP32 3.x, 16 MB, OPI PSRAM)
 ├── tools/version.py          versioon git sildist → SIMCAM_VERSION
+├── tools/flasher/            Windowsi paigaldaja (simcam-flasher-*.exe allikas)
+├── web-flasher/              brauseri-paigaldusleht (GitHub Pages, ESP Web Tools)
 ├── .github/workflows/        CI: ehitus + release (silt v*)
 └── src/
     ├── config.h              viigud, pordid, vaikeseaded (ilma saladusteta)

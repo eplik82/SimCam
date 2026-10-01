@@ -4,6 +4,15 @@
 #     Seade leiab selle FOTA kaudu (⚙ → Püsivara → Kontrolli uuendusi).
 #   * käsitsi käivitus (Actions → Firmware → Run workflow, sisend "tag",
 #     nt v1.4.0) → sama release; silt luuakse valitud haru viimasele commitile.
+#
+#  Release'i failid:
+#   simcam-firmware.bin           FOTA (üle võrgu uuendamine)
+#   simcam-factory.bin            esmane USB-laadimine aadressile 0x0
+#   simcam-flasher-<versioon>.exe Windowsi paigaldaja (püsivara on sees)
+#   SHA256SUMS.txt
+#  Lisaks avaldatakse brauseri-paigaldusleht GitHub Pagesis (web-flasher/),
+#  kui release tehakse main harust või sildist ja Pages on sisse lülitatud
+#  (Settings → Pages → Source: GitHub Actions).
 name: Firmware
 
 on:
@@ -20,12 +29,13 @@ on:
 permissions:
   contents: write
 
+env:
+  # silt (push) või käsitsi käivituse sisend; tühi = ainult kompileerimise kontroll
+  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag || '' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      # silt (push) või käsitsi käivituse sisend; tühi = ainult kompileerimise kontroll
-      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,19 +61,113 @@ jobs:
       - name: Prepare release files
         if: startsWith(env.RELEASE_TAG, 'v')
         run: |
-          cp .pio/build/t-simcam/firmware.bin simcam-firmware.bin
-          cp .pio/build/t-simcam/firmware.factory.bin simcam-factory.bin
-          sha256sum simcam-*.bin > SHA256SUMS.txt
+          mkdir -p out
+          cp .pio/build/t-simcam/firmware.bin out/simcam-firmware.bin
+          cp .pio/build/t-simcam/firmware.factory.bin out/simcam-factory.bin
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(env.RELEASE_TAG, 'v')
+        with:
+          name: firmware
+          path: out/
+
+  # Windowsi paigaldaja: Python + esptool + püsivara ühes .exe failis
+  flasher-exe:
+    needs: build
+    # jobs.*.if ei näe workflow env-i → sama tingimus kui RELEASE_TAG-il
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.tag, 'v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: out
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build exe
+        shell: bash
+        run: |
+          pip install esptool==4.8.1 pyinstaller
+          sed -i "s/@VERSION@/${RELEASE_TAG}/" tools/flasher/simcam_flasher.py
+          cp out/simcam-factory.bin .
+          pyinstaller --onefile --console --name "simcam-flasher-${RELEASE_TAG}" \
+            --add-data "simcam-factory.bin;." --collect-data esptool \
+            tools/flasher/simcam_flasher.py
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flasher-exe
+          path: dist/*.exe
+
+  release:
+    needs: [build, flasher-exe]
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.tag, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: out
+        run: |
+          sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Publish release
-        if: startsWith(env.RELEASE_TAG, 'v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
-          files: |
-            simcam-firmware.bin
-            simcam-factory.bin
-            SHA256SUMS.txt
+          files: out/*
           generate_release_notes: true
+
+  # Brauseri-paigaldusleht (ESP Web Tools) GitHub Pagesis
+  pages:
+    needs: [build, release]
+    # github-pages keskkond lubab vaikimisi avaldada ainult main harust (ja siltidest)
+    if: (startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.tag, 'v')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    continue-on-error: true          # Pages võib olla repos välja lülitatud
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: out
+
+      - name: Build site
+        run: |
+          mkdir -p _site
+          cp web-flasher/index.html _site/
+          cp out/simcam-factory.bin _site/
+          cat > _site/manifest.json <<EOF
+          {
+            "name": "SimCam",
+            "version": "${RELEASE_TAG#v}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              { "chipFamily": "ESP32-S3", "parts": [ { "path": "simcam-factory.bin", "offset": 0 } ] }
+            ]
+          }
+          EOF
+          cat _site/manifest.json
+
+      - uses: actions/upload-pages-artifact@v3
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

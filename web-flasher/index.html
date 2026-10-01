@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SimCam paigaldus</title>
+<meta name="description" content="SimCam püsivara paigaldamine LilyGO T-SIMCAM plaadile otse brauserist (USB).">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--mut:#5d6577;--line:#e3e6ec;--acc:#2f6fed;--warn:#a15c00;--bad:#c62828}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12151b;--card:#1b2029;--fg:#e8ebf1;--mut:#9aa3b5;--line:#2a303b;--acc:#5b8cff;--warn:#f0b429;--bad:#ff6b6b}}
+:root[data-theme="dark"]{--bg:#12151b;--card:#1b2029;--fg:#e8ebf1;--mut:#9aa3b5;--line:#2a303b;--acc:#5b8cff;--warn:#f0b429;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:680px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:26px;margin:0 0 4px}
+.sub{color:var(--mut);margin:0 0 22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:16px}
+.card h2{font-size:17px;margin:0 0 10px}
+ol{margin:0;padding-left:22px}li{margin:6px 0}
+.install{display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+esp-web-install-button button[slot=activate]{font:inherit;font-size:17px;font-weight:600;background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 22px;cursor:pointer}
+.ver{color:var(--mut);font-size:14px}
+.warn{color:var(--warn)}.bad{color:var(--bad)}
+code{background:var(--bg);border:1px solid var(--line);padding:1px 6px;border-radius:6px;font-size:14px}
+a{color:var(--acc)}
+.note{font-size:14px;color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<h1>SimCam paigaldus</h1>
+<p class="sub">Esmane püsivara LilyGO T-SIMCAM (ESP32-S3) plaadile otse brauserist – USB-kaabliga, ilma programme paigaldamata.</p>
+
+<section class="card">
+ <h2>1. Ühenda plaat</h2>
+ <ol>
+  <li>Ühenda T-SIMCAM <b>USB-C</b> kaabliga arvutiga (kaabel peab andmeid edastama, mitte ainult laadima).</li>
+  <li>Kasuta <b>Chrome</b>-i või <b>Edge</b>-i arvutis (Firefox ja Safari ei toeta USB-jadaporti).</li>
+ </ol>
+</section>
+
+<section class="card">
+ <h2>2. Paigalda</h2>
+ <div class="install">
+  <esp-web-install-button manifest="manifest.json">
+   <button slot="activate">Paigalda SimCam</button>
+   <span slot="unsupported" class="bad">See brauser ei toeta paigaldamist. Ava leht arvutis Chrome-i või Edge-iga.</span>
+   <span slot="not-allowed" class="bad">Paigaldus vajab turvalist (https) ühendust.</span>
+  </esp-web-install-button>
+  <span class="ver" id="ver">Püsivara: …</span>
+ </div>
+ <ol style="margin-top:12px">
+  <li>Vajuta <b>Paigalda SimCam</b> ja vali avanevast loendist plaadi port (tavaliselt „USB JTAG/serial debug unit" või „ESP32-S3").</li>
+  <li>Uue plaadi puhul vali <b>„Erase device"</b> (kustuta) – nii kaovad tehase tarkvara ja vanad seaded.</li>
+  <li>Oota, kuni paigaldus jõuab 100 %-ni (u 1–2 min).</li>
+ </ol>
+ <p class="note warn">Kui porti ei ilmu või ühendus ei õnnestu: hoia <b>BOOT</b> nuppu all, vajuta korraks <b>RESET</b>, lase BOOT lahti ja proovi uuesti. Pärast paigaldust vajuta RESET.</p>
+</section>
+
+<section class="card">
+ <h2>3. Esimene käivitus</h2>
+ <ol>
+  <li>Ühenda telefon WiFi võrku <code>SimCam</code>, parool <code>simcam2026</code>.</li>
+  <li>Kaamera leht avaneb ise (või ava <code>http://4.3.2.1/</code>).</li>
+  <li>Logi sisse parooliga <code>simcam</code> ja muuda paroolid seadetes (⚙).</li>
+ </ol>
+ <p class="note">Edasised uuendused tulevad üle võrgu: ⚙ → Püsivara. Ilma brauserita: Windowsi programm <code>simcam-flasher-&lt;versioon&gt;.exe</code> <a href="https://github.com/eplik82/SimCam/releases/latest">release'i lehel</a>.</p>
+</section>
+</main>
+<script>
+fetch('manifest.json',{cache:'no-store'}).then(r=>r.json()).then(m=>{document.getElementById('ver').textContent='Püsivara: '+m.name+' '+m.version})
+ .catch(()=>{document.getElementById('ver').textContent='Püsivara info puudub'});
+</script>
+</body>
+</html>
