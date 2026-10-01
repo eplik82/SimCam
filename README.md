@@ -23,7 +23,8 @@ release'ist (FOTA)**.
 
 ## Omadused
 
-* **Kaamera:** OV5640 (ka OV2640/OV3660), JPEG 800x600, pidev autofookus + nupp
+* **Kaamera:** OV5640 (ka OV2640/OV3660), JPEG, resolutsioon valitav 320×240 … 1920×1080
+  (vaikimisi 800×600, ⚙ → 📷 Pilt), pidev autofookus + nupp
   „Fookus", pööramine nuppudega 0°/90°/180°/270° (kehtib ka RTSP-s), madal viivitus –
   aeglase võrgu korral jäetakse kaadrid vahele, puhvrit ei kogune.
 * **Pealeht:** pildi all tegelik kaadrisagedus ja võrgukiirus (kB/s, Mbit/s), mida
@@ -87,8 +88,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.6.0
-git push origin v1.6.0
+git tag v1.7.0
+git push origin v1.7.0
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -181,6 +182,14 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
   suunatakse kaamera lehele.
 
 ## Pööramine ja kaamera juhtimine
+
+**Resolutsioon:** ⚙ → **📷 Pilt** → QVGA 320×240, VGA 640×480, **SVGA 800×600**
+(vaikimisi), XGA 1024×768, HD 1280×720, SXGA 1280×1024, UXGA 1600×1200 või
+Full HD 1920×1080 (OV2640 puhul kuni UXGA). Valik rakendub kohe ja salvestub.
+Suurem resolutsioon = väiksem kaadrisagedus ja suurem andmemaht – LTE-s soovitame
+SVGA-d või väiksemat. Kaadripuhvrid eraldatakse käivitusel suurima resolutsiooni
+jaoks. 90°/270° pööret tehakse kuni 1280×1024-ni (suurema juures näidatakse pilti
+pööramata ja pealehel on hoiatus).
 
 * 180° teeb sensor ise (täiskiirus). 90°/270° puhul kodeeritakse iga kaader ümber
   (`esp_new_jpeg`, ~260 ms kaadri kohta → ~3–4 fps, pilt 600x800).

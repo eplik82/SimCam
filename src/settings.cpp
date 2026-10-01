@@ -23,6 +23,7 @@ static void defaults(Data &d) {
     strlcpy(d.apPass, WIFI_AP_PASS_DEFAULT, sizeof(d.apPass));
     d.lteEnabled = LTE_ENABLED_DEFAULT;
     d.rotation = CAM_ROTATION_DEFAULT;
+    d.framesize = CAM_FRAME_SIZE;
     d.simPin[0] = 0;
     d.apn[0] = 0;
     strlcpy(d.webPass, WEB_PASS_DEFAULT, sizeof(d.webPass));
@@ -69,6 +70,7 @@ void load() {
         d.batEnabled = p.getBool("bat_en", d.batEnabled);
         d.batCal = p.getFloat("bat_cal", d.batCal);
         if (!(d.batCal > 0.8f && d.batCal < 1.25f)) d.batCal = 1.0f;
+        d.framesize = p.getInt("framesize", d.framesize);
         d.micEnabled = p.getBool("mic_en", d.micEnabled);
         d.micGain = constrain(p.getInt("mic_gain", d.micGain), 0, 40);
         d.micCodec = p.getInt("mic_codec", d.micCodec) == 1 ? 1 : 0;
@@ -128,6 +130,7 @@ bool save(const Data &din) {
     p.putBool("auto_upd", d.autoUpdate);
     p.putBool("bat_en", d.batEnabled);
     p.putFloat("bat_cal", d.batCal);
+    p.putInt("framesize", d.framesize);
     p.putBool("mic_en", d.micEnabled);
     p.putInt("mic_gain", d.micGain);
     p.putInt("mic_codec", d.micCodec);

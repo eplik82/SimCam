@@ -326,7 +326,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         "\"rsrp\":%d,\"rsrq\":%.1f,\"reg\":%d,\"model\":\"%s\",\"imei\":\"%s\","
         "\"baud\":%lu,\"cmux\":%s,\"conn_s\":%lu,\"reconnects\":%lu,\"error\":\"%s\"},"
         "\"cam\":{\"sensor\":\"%s\",\"res\":\"%s\",\"fps\":%.2f,\"frame_kb\":%.1f,"
-        "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d,\"rot_ms\":%.0f},"
+        "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d,\"rot_ms\":%.0f,\"rot_limited\":%s},"
         "\"sys\":{\"uptime\":%llu,\"heap_free\":%u,\"heap_total\":%u,\"heap_min\":%u,"
         "\"psram_free\":%u,\"psram_total\":%u,\"temp\":%.1f,\"rtsp_clients\":%d,"
         "\"http_streams\":%d,\"rtsp_auth\":%s,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\","
@@ -341,6 +341,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         Camera::sensorName(), Camera::resolutionName(), Camera::fps(),
         Camera::lastFrameBytes() / 1024.0f, Camera::afStatus(),
         Camera::afSupported() ? "true" : "false", Camera::consumers(), Camera::rotation(), Camera::rotateMs(),
+        Camera::rotationLimited() ? "true" : "false",
         (unsigned long long)(esp_timer_get_time() / 1000000ULL),
         ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(),
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
@@ -552,10 +553,10 @@ static esp_err_t h_view(httpd_req_t *req) {
     char b[320];
     snprintf(b, sizeof(b), "{\"fps\":%.1f,\"kBps\":%.1f,\"cam_fps\":%.1f,\"rotate\":%d,\"frame_kb\":%.1f,"
              "\"bat\":{\"enabled\":%s,\"state\":\"%s\",\"v\":%.2f,\"pct\":%d},"
-             "\"mic\":{\"on\":%s,\"level\":%.1f}}",
+             "\"mic\":{\"on\":%s,\"level\":%.1f},\"rot_limited\":%s}",
              fps, kBps, Camera::fps(), Camera::rotation(), Camera::lastFrameBytes() / 1024.0f,
              bs.enabled ? "true" : "false", Battery::stateName(bs.state), bs.voltage, bs.percent,
-             Audio::running() ? "true" : "false", Audio::levelDb());
+             Audio::running() ? "true" : "false", Audio::levelDb(), Camera::rotationLimited() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, b);
@@ -570,7 +571,7 @@ static esp_err_t h_favicon(httpd_req_t *req) {
 static esp_err_t h_config_get(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     Settings::Data d = Settings::get();
-    char ss[70], as[70], apn[130], buf[800];
+    char ss[70], as[70], apn[130], buf[1400];
     jsonEsc(ss, sizeof(ss), d.staSsid);
     jsonEsc(as, sizeof(as), d.apSsid);
     jsonEsc(apn, sizeof(apn), d.apn);
@@ -579,13 +580,15 @@ static esp_err_t h_config_get(httpd_req_t *req) {
         "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
         "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s,"
-        "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"rtsp_audio\":%s}",
+        "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"rtsp_audio\":%s,"
+        "\"framesize\":%d,\"framesizes\":%s}",
         d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
         d.lteEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
         strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false",
         d.autoUpdate ? "true" : "false",
-        d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.rtspAudio ? "true" : "false");
+        d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.rtspAudio ? "true" : "false",
+        Camera::framesize(), Camera::framesizesJson().c_str());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, buf, n);
@@ -603,6 +606,11 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (!readBody(req, body, sizeof(body))) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
         return ESP_FAIL;
+    }
+    char fsv[8];
+    if (formField(body, "framesize", fsv, sizeof(fsv)) && fsv[0]) {   // resolutsioon: rakendub kohe
+        if (!Camera::setFramesize(atoi(fsv)))
+            return sendJson(req, "{\"ok\":false,\"error\":\"Seda resolutsiooni see sensor ei toeta\"}");
     }
 
     Settings::Data d = Settings::get();

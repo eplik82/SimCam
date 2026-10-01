@@ -60,7 +60,7 @@ body{display:flex;flex-direction:column;color:#fff}
   <span class="msg" id="msg">Ühendan…</span>
   <a class="gear" href="/settings" title="Seaded">⚙</a>
 </div>
-<div class="info" id="info"><span id="iBat" style="display:none"></span><span id="iMic" style="display:none"></span><span id="iStat">Ühendan…</span><span class="warn" id="iWarn" style="display:none">⚠ 90°/270° pööre vähendab kaadrisagedust (~3–4 fps)</span></div>
+<div class="info" id="info"><span id="iBat" style="display:none"></span><span id="iMic" style="display:none"></span><span id="iStat">Ühendan…</span><span class="warn" id="iWarn" style="display:none">⚠ 90°/270° pööre vähendab kaadrisagedust (~3–4 fps)</span><span class="warn" id="iRotLim" style="display:none">⚠ Selle resolutsiooni juures 90°/270° pööret ei tehta (max 1280×1024)</span></div>
 <div class="bar">
   <button id="bPlay" title="Peata / jätka vaade">⏸<span class="lbl">Peata</span></button>
   <span class="rot" title="Pildi pööre"><button data-r="0">0°</button><button data-r="90">90°</button><button data-r="180">180°</button><button data-r="270">270°</button></span>
@@ -90,6 +90,7 @@ async function stats(){
  if(!playing){$('iStat').textContent='Vaade peatatud'}
  else try{const d=await (await api('/api/view?id='+vid,{cache:'no-store'})).json();
   if(d.rotate!==rot){rot=d.rotate;showRot()}
+  $('iRotLim').style.display=d.rot_limited?'':'none';if(d.rot_limited)$('iWarn').style.display='none';
   const b=d.bat,ib=$('iBat');ib.style.display=b&&b.enabled&&b.state!='ABSENT'?'':'none';
   const mc=d.mic,im=$('iMic');$('bAudio').style.display=mc&&mc.on?'':'none';im.style.display=mc&&mc.on&&SimAudio.active()?'':'none';
   if(mc&&mc.on){const lv=Math.max(0,Math.min(100,(mc.level+70)/70*100));im.innerHTML=`🎤<span class="mbar"><i style="width:${lv.toFixed(0)}%"></i></span>`}
@@ -232,6 +233,16 @@ details form{margin-top:8px}
 
 <h3>Seaded</h3>
 <div class="cols">
+ <section class="card"><h2>📷 Pilt</h2>
+  <form id="fCam">
+   <label>Resolutsioon
+    <select class="sel" id="f_fs"></select></label>
+   <div class="note" id="fsNote">Suurem resolutsioon = detailsem pilt, kuid väiksem kaadrisagedus ja suurem andmemaht. Mobiilivõrgus (LTE) soovitame SVGA 800×600 või väiksemat.</div>
+   <div class="warn" id="fsRot" style="display:none">90°/270° pööret tehakse kuni 1280×1024 resolutsioonini – suurema juures näidatakse pilti pööramata.</div>
+   <div class="btns"><button class="pri" type="submit">Rakenda</button></div>
+  </form>
+ </section>
+
  <section class="card"><h2>WiFi võrk</h2>
   <form id="fWifi" autocomplete="off">
    <label class="chk"><input type="checkbox" id="f_sta_en"> Ühendu WiFi võrku</label>
@@ -337,6 +348,7 @@ async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-s
  $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;
  $('f_pin').placeholder=c.has_pin?'(salvestatud)':'(puudub)';$('f_pin_clear').checked=false;
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
+ if(c.framesizes){const sel=$('f_fs');sel.innerHTML=c.framesizes.map(f=>`<option value="${f.v}">${f.name} – ${f.w}×${f.h}${f.v==c.framesize?' (praegu)':''}</option>`).join('');sel.value=c.framesize;showFsRot()}
  $('f_mic_en').checked=c.mic_en;$('f_mic_gain').value=c.mic_gain;$('m_gain_t').textContent=c.mic_gain+' dB';
  $('f_mic_codec').value=c.mic_codec;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
  $('defpass').style.display=c.default_pass?'block':'none'}catch(e){}}
@@ -375,6 +387,11 @@ $('fSim').onsubmit=async e=>{e.preventDefault();const o=$('s_old').value.trim(),
  if(!confirm('Muuta SIM-kaardi PIN?'))return;toast('Muudan SIM PIN-i…');
  try{const d=await (await api('/api/simpin',form({old:o,new:n}))).json();
   toast(d.ok?'SIM PIN muudetud':('Ebaõnnestus: '+(d.error||'')));if(d.ok){['s_old','s_new','s_new2'].forEach(i=>$(i).value='')}}catch(e){}};
+let camRot=0;
+function showFsRot(){const o=$('f_fs').selectedOptions[0];const m=o&&/(\d+)×(\d+)/.exec(o.textContent);
+ $('fsRot').style.display=m&&(camRot==90||camRot==270)&&m[1]*m[2]>1280*1024?'block':'none'}
+$('f_fs').onchange=showFsRot;
+$('fCam').onsubmit=e=>{e.preventDefault();save({framesize:$('f_fs').value},'Resolutsioon muudetud')};
 $('f_mic_gain').oninput=()=>$('m_gain_t').textContent=$('f_mic_gain').value+' dB';
 $('f_mic_en').onchange=()=>{const on=$('f_mic_en').checked;$('micOn').style.display=on?'':'none';if(!on)SimAudio.stop();
  save({mic_en:on?1:0},on?'Mikrofon sees':'Mikrofon väljas')};
@@ -416,7 +433,7 @@ async function poll(){
   $('lteIp').innerHTML=m.connected?`📡 Mobiilivõrgu IP: <b>${m.ip}</b> (operaatorilt saadud)`:(m.state=='DISABLED'?'Mobiilivõrgu IP: – (LTE väljas)':`Mobiilivõrgu IP: – (IP-d pole veel saadud, olek ${m.state})`);
   if(s.rtsp_auth!==undefined&&s.rtsp_auth!==rtspAuth){rtspAuth=s.rtsp_auth;showRtsp()}
   $('c_res').textContent=c.sensor+' · '+c.res;$('c_fps').textContent=c.fps.toFixed(1)+' fps · '+c.frame_kb.toFixed(1)+' kB';
-  $('c_af').textContent=c.af;$('c_rot').textContent=c.rotate+'°'+(c.rot_ms?` (${c.rot_ms} ms/kaader)`:'');
+  $('c_af').textContent=c.af;if(c.rotate!==camRot){camRot=c.rotate;showFsRot()}$('c_rot').textContent=c.rotate+'°'+(c.rot_ms?` (${c.rot_ms} ms/kaader)`:'');
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
   $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;

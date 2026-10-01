@@ -52,6 +52,9 @@ static const char       *s_sensor = "unknown";
 
 // --- Pööramine -------------------------------------------------------------
 static volatile int      s_rotation = 0;        // 0/90/180/270
+static int               s_framesize = CAM_FRAME_SIZE;
+static framesize_t       s_maxFs = CAM_FRAME_SIZE_MAX;
+static volatile bool     s_rotLimited = false;
 static volatile bool     s_rot90 = false;       // kas tarkvaraline 90° pööre
 static bool              s_userVflip = false, s_userHmirror = false;
 static volatile float    s_rotMs = 0;
@@ -85,7 +88,7 @@ static camera_config_t makeConfig() {
     c.ledc_timer   = LEDC_TIMER_0;
     c.ledc_channel = LEDC_CHANNEL_0;
     c.pixel_format = PIXFORMAT_JPEG;
-    c.frame_size   = CAM_FRAME_SIZE;
+    c.frame_size   = CAM_FRAME_SIZE_MAX;   // puhvrid suurima jaoks; tegelik suurus seatakse kohe pärast
     c.jpeg_quality = CAM_JPEG_QUALITY;
     c.fb_count     = CAM_FB_COUNT;
     c.fb_location  = CAMERA_FB_IN_PSRAM;
@@ -110,6 +113,9 @@ static bool initSensor() {
         default:         s_sensor = "unknown"; break;
     }
     LOGI(TAG, "Kaamera sensor: %s (PID 0x%04x)", s_sensor, s->id.PID);
+    s_maxFs = CAM_FRAME_SIZE_MAX;
+    if (camera_sensor_info_t *inf = esp_camera_sensor_get_info(&s->id))
+        if (inf->max_size < s_maxFs) s_maxFs = inf->max_size;
 
     // Mõistlikud vaikepildiseaded
     s->set_quality(s, CAM_JPEG_QUALITY);
@@ -123,6 +129,8 @@ static bool initSensor() {
     if (s->id.PID == OV3660_PID) {
         s->set_vflip(s, 1);
     }
+    int fs = Settings::get().framesize;
+    if (!setFramesize(fs, false)) setFramesize(CAM_FRAME_SIZE, false);
     return true;
 }
 
@@ -285,7 +293,8 @@ static void captureTask(void *) {
         size_t srcLen = fb->len;
         uint16_t fw = fb->width, fh = fb->height;
         bool okFrame = fb->format == PIXFORMAT_JPEG && fb->len > 128;
-        if (okFrame && s_rot90) {
+        s_rotLimited = s_rot90 && (uint32_t)fw * fh > CAM_ROT_MAX_PIXELS;
+        if (okFrame && s_rot90 && !s_rotLimited) {
             uint32_t r0 = millis();
             int outLen = 0;
             okFrame = rotateJpeg90(fb->buf, fb->len, outLen, fw, fh);
@@ -393,7 +402,7 @@ bool control(const char *var, int val) {
         LOGI(TAG, "IR-filtri viik GPIO%d = %d", CAM_IR_PIN, s_ir);
         return true;
     }
-    if      (!strcmp(var, "framesize"))  { if (val < 0 || val >= FRAMESIZE_INVALID) return false; r = s->set_framesize(s, (framesize_t)val); }
+    if      (!strcmp(var, "framesize"))  return setFramesize(val);
     else if (!strcmp(var, "quality"))    r = s->set_quality(s, val);
     else if (!strcmp(var, "brightness")) r = s->set_brightness(s, val);
     else if (!strcmp(var, "contrast"))   r = s->set_contrast(s, val);
@@ -482,6 +491,53 @@ const char *resolutionName() {
     static char buf[24];
     snprintf(buf, sizeof(buf), "%ux%u", s_w, s_h);
     return buf;
+}
+
+// --- Resolutsioon ---------------------------------------------------------------
+static const struct { framesize_t fs; const char *name; uint16_t w, h; } FS_LIST[] = {
+    {FRAMESIZE_QVGA, "QVGA", 320, 240},   {FRAMESIZE_VGA, "VGA", 640, 480},
+    {FRAMESIZE_SVGA, "SVGA", 800, 600},   {FRAMESIZE_XGA, "XGA", 1024, 768},
+    {FRAMESIZE_HD, "HD 720p", 1280, 720}, {FRAMESIZE_SXGA, "SXGA", 1280, 1024},
+    {FRAMESIZE_UXGA, "UXGA", 1600, 1200}, {FRAMESIZE_FHD, "Full HD 1080p", 1920, 1080},
+};
+
+bool setFramesize(int fs, bool save) {
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s) return false;
+    bool known = false;
+    for (const auto &f : FS_LIST) if (f.fs == fs) known = true;
+    if (!known || fs > s_maxFs) {
+        LOGW(TAG, "Resolutsioon %d pole lubatud (sensori maksimum %d)", fs, (int)s_maxFs);
+        return false;
+    }
+    if (s->set_framesize(s, (framesize_t)fs) != 0) {
+        LOGE(TAG, "Resolutsiooni %d seadmine ebaõnnestus", fs);
+        return false;
+    }
+    s_framesize = fs;
+    for (const auto &f : FS_LIST)
+        if (f.fs == fs) LOGI(TAG, "Resolutsioon %s (%ux%u)", f.name, f.w, f.h);
+    if (save) {
+        Settings::Data d = Settings::get();
+        d.framesize = fs;
+        Settings::save(d);
+    }
+    return true;
+}
+
+int framesize() { return s_framesize; }
+bool rotationLimited() { return s_rotLimited; }
+
+String framesizesJson() {
+    String j = "[";
+    for (const auto &f : FS_LIST) {
+        if (f.fs > s_maxFs) continue;
+        char b[80];
+        snprintf(b, sizeof(b), "%s{\"v\":%d,\"name\":\"%s\",\"w\":%u,\"h\":%u}",
+                 j.length() > 1 ? "," : "", (int)f.fs, f.name, f.w, f.h);
+        j += b;
+    }
+    return j + "]";
 }
 
 float fps() { return s_fps; }

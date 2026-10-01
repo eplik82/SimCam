@@ -15,6 +15,7 @@ struct Data {
     char apPass[65];
     bool lteEnabled;
     int  rotation;            // kaamerapildi pööre: 0 / 90 / 180 / 270 (päripäeva)
+    int  framesize;           // kaamera resolutsioon (esp32-camera framesize_t)
     char simPin[9];           // SIM PIN (tühi = PIN-i ei saadeta)
     char apn[64];             // APN, nt operaatori staatilise IP APN
     char webPass[65];         // veebiliidese + RTSP parool

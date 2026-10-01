@@ -116,7 +116,14 @@
 // Resolutsioon: SVGA (800x600) on UART-PPP jaoks hea kompromiss.
 // Võimalikud: FRAMESIZE_VGA, FRAMESIZE_SVGA, FRAMESIZE_XGA, FRAMESIZE_HD,
 //             FRAMESIZE_UXGA, FRAMESIZE_FHD (1080p, ainult OV5640)
-#define CAM_FRAME_SIZE       FRAMESIZE_SVGA
+#define CAM_FRAME_SIZE       FRAMESIZE_SVGA   // vaikimisi; muudetav veebis (⚙ → Pilt)
+// Kaadripuhvrid eraldatakse käivitusel selle (või sensori maksimumi) jaoks, et
+// resolutsiooni saaks hiljem suurendada. FHD (1920×1080) on ka RTP/JPEG
+// piirist (2040 px) väiksem; OV2640 puhul piirab sensor UXGA-ga.
+#define CAM_FRAME_SIZE_MAX   FRAMESIZE_FHD
+// 90°/270° pööre vajab dekodeerimiseks laius × kõrgus × 2 baiti PSRAM-i ja
+// ~0,3 s kaadri kohta 800×600 juures – suurematel resolutsioonidel pööret ei tehta.
+#define CAM_ROT_MAX_PIXELS   (1280 * 1024)
 #define CAM_JPEG_QUALITY     14          // 0–63, väiksem = parem kvaliteet/suurem fail
 #define CAM_XCLK_HZ          20000000    // OV5640/OV2640 jaoks 20 MHz
 #define CAM_FB_COUNT         2           // topeltpuhver PSRAM-is

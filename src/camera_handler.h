@@ -53,6 +53,12 @@ float rotateMs();                 // keskmine ümberkodeerimise aeg (90°/270°)
 // Info veebiliidesele
 const char *sensorName();
 const char *resolutionName();
+
+// Resolutsioon (esp32-camera framesize_t). Lubatud: QVGA … FHD, sensori piires.
+bool setFramesize(int fs, bool save = true);
+int  framesize();
+String framesizesJson();          // [{"v":11,"name":"SVGA","w":800,"h":600},…] – sensori toetatud
+bool rotationLimited();           // 90°/270° pööre jäeti resolutsiooni tõttu tegemata
 float fps();                  // tegelik hõive FPS
 size_t lastFrameBytes();
 void addConsumer();           // loendab aktiivseid vaatajaid
