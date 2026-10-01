@@ -24,6 +24,8 @@
 // MikroTik R11e-LTE EI SOBI: see on ainult USB-seade (RNDIS + CDC-ACM, USB ID
 // 2cd2:0001) ja vajab 3,3 V toidet. T-SIMCAM-i mPCIe USB liinid pole ESP32-ga
 // ühendatud ning 4,2 V toide ületab mPCIe standardi (3,3 V ±9 %).
+// Sierra Wireless MC7304 EI SOBI samal põhjusel: ainult USB 2.0 (QMI/MBIM,
+// AT-pordid USB kaudu), viigud 17/19 ühendamata, toide 3,3 V.
 #define MODEM_TYPE_SIM7600   1        // LilyGO T-PCIe SIM7600 (soovitatud)
 #define MODEM_TYPE_GENERIC   2        // muu UART-iga 3GPP modem
 #define MODEM_TYPE           MODEM_TYPE_SIM7600
@@ -77,6 +79,10 @@
 #define SD_SCLK_PIN          39
 #define SD_MOSI_PIN          38
 #define SD_MISO_PIN          40
+
+// Aku (skeem T_SIMCAM-V1.3: TP4056 laadija, jagur RD2/RD1 = 100 k / 100 k)
+#define BAT_ADC_PIN          3    // BAT_ADC → ESP32-S3 GPIO3 (ADC1_CH2)
+#define BAT_DIVIDER          2.0f // aku pinge = ADC pinge × 2
 
 // -----------------------------------------------------------------------------
 //  Modemi UART / PPP
@@ -156,5 +162,5 @@
 #define WIFI_HOSTNAME             "simcam"       // http://simcam.local (mDNS)
 
 // LTE modemi haldur. 0 = välja lülitatud (ei saadeta PWRKEY impulsse ega
-// AT-käske). NB! MikroTik R11e-LTE puhul hoia väljas ja eemalda kaart pesast.
+// AT-käske). NB! MikroTik R11e-LTE / Sierra MC7304 puhul hoia väljas ja eemalda kaart pesast.
 #define LTE_ENABLED_DEFAULT       0

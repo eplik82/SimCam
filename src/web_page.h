@@ -2,6 +2,7 @@
 //  Veebiliidese lehed (HTML + CSS + JS) – talletatud flash-mälus (PROGMEM)
 //   INDEX_HTML    – vaade: ainult kaamerapilt + nupud
 //   SETTINGS_HTML – olek, WiFi/LTE seaded, parool, taaskäivitus
+//   LOG_HTML      – seadme logi (jooksev + eelmine käivitus)
 //   LOGIN_HTML    – sisselogimine
 //   COMMON_CSS    – ühine stiil (/style.css)
 // =============================================================================
@@ -45,6 +46,7 @@ body{display:flex;flex-direction:column;color:#fff}
 .info{display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 10px;background:#0d0f14;color:#aab2c0;font-size:13px;font-variant-numeric:tabular-nums;border-top:1px solid #222;min-height:30px}
 .info b{color:#e8ebf1;font-weight:600}
 .info .warn{color:#f0b429}
+.info .low{color:#ff6b6b;font-weight:600}
 .rot{display:inline-flex;border:1px solid #2a303b;border-radius:10px;overflow:hidden}
 .bar .rot button{border:0;border-radius:0;min-width:48px;padding:10px 10px;border-right:1px solid #2a303b}
 .bar .rot button:last-child{border-right:0}
@@ -55,7 +57,7 @@ body{display:flex;flex-direction:column;color:#fff}
   <span class="msg" id="msg">Ühendan…</span>
   <a class="gear" href="/settings" title="Seaded">⚙</a>
 </div>
-<div class="info" id="info"><span id="iStat">Ühendan…</span><span class="warn" id="iWarn" style="display:none">⚠ 90°/270° pööre vähendab kaadrisagedust (~3–4 fps)</span></div>
+<div class="info" id="info"><span id="iBat" style="display:none"></span><span id="iStat">Ühendan…</span><span class="warn" id="iWarn" style="display:none">⚠ 90°/270° pööre vähendab kaadrisagedust (~3–4 fps)</span></div>
 <div class="bar">
   <button id="bPlay" title="Peata / jätka vaade">⏸<span class="lbl">Peata</span></button>
   <span class="rot" title="Pildi pööre"><button data-r="0">0°</button><button data-r="90">90°</button><button data-r="180">180°</button><button data-r="270">270°</button></span>
@@ -83,6 +85,9 @@ async function stats(){
  if(!playing){$('iStat').textContent='Vaade peatatud'}
  else try{const d=await (await api('/api/view?id='+vid,{cache:'no-store'})).json();
   if(d.rotate!==rot){rot=d.rotate;showRot()}
+  const b=d.bat,ib=$('iBat');ib.style.display=b&&b.enabled&&b.state!='ABSENT'?'':'none';
+  if(b&&b.enabled){ib.className=b.state=='LOW'?'low':'';ib.title='Aku '+b.v.toFixed(2)+' V';
+   ib.textContent=(b.state=='CHARGING'?'⚡':b.state=='LOW'?'🪫':'🔋')+' '+b.pct+' %'}
   if(d.fps<0)$('iStat').textContent='Ühendan…';
   else $('iStat').innerHTML=`<b>${d.fps.toFixed(1)} fps</b> · <b>${d.kBps.toFixed(0)} kB/s</b> (${(d.kBps*8/1024).toFixed(2)} Mbit/s) · kaader ${d.frame_kb.toFixed(1)} kB`;
  }catch(e){}
@@ -137,6 +142,25 @@ label.chk input{width:18px;height:18px;margin:0;accent-color:var(--acc)}
 hr{border:0;border-top:1px solid var(--line);margin:4px 0}
 .ipbox{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:14px}
 .ipbox b{font-variant-numeric:tabular-nums}
+.nets{display:none;grid-template-columns:minmax(0,1fr);gap:4px;max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:4px}
+.nets.show{display:grid}
+.nets button{box-sizing:border-box;width:100%;min-width:0;justify-content:space-between;gap:10px;border:0;border-radius:8px;padding:11px 10px;text-align:left}
+.nets button:hover,.nets button:active{background:var(--bg)}
+.nets button>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.nets small{color:var(--mut);flex:none;white-space:nowrap}
+.bat{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.bat .pct{font-size:30px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1}
+.bat .st{font-size:14px;color:var(--mut)}
+.meter{height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin:2px 0 8px}
+.meter>div{height:100%;width:0;background:var(--ok);border-radius:5px;transition:width .4s}
+.meter.low>div{background:var(--bad)}.meter.mid>div{background:var(--warn)}
+.chart{position:relative;margin:8px 0 2px}
+.chart svg{display:block;width:100%;height:150px;touch-action:none}
+.chart .tip{position:absolute;top:0;pointer-events:none;background:var(--fg);color:var(--bg);font-size:12px;padding:3px 7px;border-radius:6px;white-space:nowrap;display:none;transform:translateX(-50%)}
+.rng{display:flex;gap:4px;justify-content:flex-end}.rng button{padding:3px 9px;font-size:12px}
+.rng button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+details summary{cursor:pointer;color:var(--mut);font-size:13px;margin-top:8px}
+details form{margin-top:8px}
 </style></head><body>
 <header><a class="btn" href="/">← Vaade</a><h1>Seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
 <main>
@@ -158,13 +182,36 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0}
   <div class="row"><span>LTE IP</span><span id="m_ip">-</span></div>
   <div class="row"><span>LTE viga</span><span id="m_err">-</span></div>
  </section>
+ <section class="card" id="batCard"><h2>🔋 Aku</h2>
+  <div id="batOn">
+   <div class="bat"><span class="pct" id="b_pct">–</span><span class="st" id="b_st">Mõõdan…</span></div>
+   <div class="meter" id="b_meter"><div id="b_bar"></div></div>
+   <div class="row"><span>Pinge</span><span id="b_v">-</span></div>
+   <div class="row"><span>Muutus (10 min)</span><span id="b_sl">-</span></div>
+   <div class="row"><span>Hinnanguline tööaeg</span><span id="b_left">-</span></div>
+   <div class="row"><span>USB arvutiga</span><span id="b_usb">-</span></div>
+   <div class="chart" id="b_chart"><svg id="b_svg" role="img" aria-label="Aku pinge ajalugu"></svg><span class="tip" id="b_tip"></span></div>
+   <div class="rng" id="b_rng"><button data-h="1">1 h</button><button data-h="6">6 h</button><button data-h="24" class="on">24 h</button></div>
+  </div>
+  <div class="note" id="batOff" style="display:none">Aku jälgimine on välja lülitatud.</div>
+  <details><summary>Aku seaded ja kalibreerimine</summary>
+   <form id="fBat">
+    <label class="chk"><input type="checkbox" id="f_bat_en"> Aku on ühendatud</label>
+    <label>Multimeetriga mõõdetud aku pinge (V)<span class="inl"><input type="text" inputmode="decimal" id="f_bat_v" placeholder="nt 3,95"><button type="submit">Kalibreeri</button></span></label>
+    <div class="note">Kalibreerimistegur: <span id="b_cal">-</span> · <a href="#" id="bCalReset">lähtesta</a><br>
+    Plaadil (TP4056 laadija, pingejagur GPIO3-l) pole voolu mõõtmist ega laadija oleku viiku – olek ja tööaeg arvutatakse pinge muutumise järgi. Laadimise ajal on pinge ja % tegelikust kõrgemad.</div>
+   </form>
+  </details>
+ </section>
  <section class="card"><h2>⚙ Süsteem</h2>
   <div class="row"><span>Tööaeg</span><span id="s_up">-</span></div>
   <div class="row"><span>RAM vaba</span><span id="s_ram">-</span></div>
   <div class="row"><span>PSRAM vaba</span><span id="s_ps">-</span></div>
   <div class="row"><span>Temperatuur</span><span id="s_t">-</span></div>
   <div class="row"><span>Püsivara</span><span id="s_fw">-</span></div>
-  <div class="btns" style="margin-top:10px"><button class="dng" id="bReboot">Taaskäivita</button><a class="btn" href="/logout">Logi välja</a></div>
+  <div class="row"><span>Viimane käivitus</span><span id="s_rst">-</span></div>
+  <div class="row"><span>Logi</span><span id="s_log">-</span></div>
+  <div class="btns" style="margin-top:10px"><a class="btn" href="/log">📄 Logi</a><button class="dng" id="bReboot">Taaskäivita</button><a class="btn" href="/logout">Logi välja</a></div>
  </section>
 </div>
 
@@ -173,8 +220,8 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0}
  <section class="card"><h2>WiFi võrk</h2>
   <form id="fWifi" autocomplete="off">
    <label class="chk"><input type="checkbox" id="f_sta_en"> Ühendu WiFi võrku</label>
-   <label>Võrgu nimi (SSID)<span class="inl"><input type="text" id="f_sta_ssid" list="ssids" maxlength="32"><button type="button" id="bScan">Otsi</button></span></label>
-   <datalist id="ssids"></datalist>
+   <label>Võrgu nimi (SSID)<span class="inl"><input type="text" id="f_sta_ssid" maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="button" id="bScan">Otsi võrke</button></span></label>
+   <div class="nets" id="ssids"></div>
    <label>Parool<input type="password" id="f_sta_pass" maxlength="64" placeholder="(muutmata)"></label>
    <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
@@ -265,11 +312,18 @@ async function save(fields,msg){
   if(!d.ok){toast(d.error||'Viga');return false}
   let t=msg||'Salvestatud';if(d.ap_forced)t+=' – hotspot jääb sisse (WiFi ja LTE on väljas)';if(d.reboot)t+=' – rakendub pärast taaskäivitust';
   toast(t);loadCfg();return true}catch(e){if(e!==0)toast('Salvestatud – ühendus võis hetkeks katkeda');return false}}
-$('bScan').onclick=async()=>{const b=$('bScan');b.disabled=true;b.textContent='…';
- try{const l=await (await api('/api/scan',{cache:'no-store'})).json();l.sort((a,b)=>b.rssi-a.rssi);
-  $('ssids').innerHTML=l.map(n=>`<option value="${n.ssid.replace(/"/g,'&quot;')}">${n.rssi} dBm${n.enc?' 🔒':''}</option>`).join('');
-  toast(l.length+' võrku leitud');$('f_sta_ssid').focus()}catch(e){toast('Otsing ebaõnnestus')}
- b.disabled=false;b.textContent='Otsi'};
+// Võrkude valik nupuloendina: <datalist> ei tööta telefonides (Android/iOS) korralikult
+$('bScan').onclick=async()=>{const b=$('bScan'),box=$('ssids');b.disabled=true;b.textContent='Otsin…';
+ try{const l=await (await api('/api/scan',{cache:'no-store'})).json();const best={};
+  l.forEach(n=>{if(n.ssid&&(!best[n.ssid]||n.rssi>best[n.ssid].rssi))best[n.ssid]=n});
+  const nets=Object.values(best).sort((a,b)=>b.rssi-a.rssi),wq=q=>q>=-55?4:q>=-65?3:q>=-75?2:q>=-85?1:0;
+  box.innerHTML='';
+  nets.forEach(n=>{const e=document.createElement('button');e.type='button';
+   e.innerHTML=`<span></span><small>${bars(wq(n.rssi))}${n.rssi} dBm${n.enc?' 🔒':''}</small>`;e.firstChild.textContent=n.ssid;
+   e.onclick=()=>{$('f_sta_ssid').value=n.ssid;box.classList.remove('show');if(n.enc)$('f_sta_pass').focus()};box.appendChild(e)});
+  box.classList.toggle('show',nets.length>0);toast(nets.length?nets.length+' võrku leitud – vali loendist':'Ühtegi võrku ei leitud')}
+ catch(e){if(e!==0)toast('Otsing ebaõnnestus')}
+ b.disabled=false;b.textContent='Otsi võrke'};
 $('fWifi').onsubmit=e=>{e.preventDefault();save({sta_en:$('f_sta_en').checked?1:0,sta_ssid:$('f_sta_ssid').value,sta_pass:$('f_sta_pass').value},'WiFi salvestatud').then(o=>{if(o)$('f_sta_pass').value=''})};
 $('fAp').onsubmit=e=>{e.preventDefault();const p=$('f_ap_pass').value;if(p&&p.length<8){toast('Parool peab olema vähemalt 8 märki');return}
  save({ap_en:$('f_ap_en').checked?1:0,ap_ssid:$('f_ap_ssid').value,ap_pass:p},'Hotspot salvestatud').then(o=>{if(o)$('f_ap_pass').value=''})};
@@ -321,9 +375,47 @@ async function poll(){
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
   $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;
+  showBat(d.bat);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
  }catch(e){if(e!==0)$('hdr').innerHTML='<span class="dot bad"></span>Seade ei vasta'}
  setTimeout(poll,3000)}
-loadCfg();poll();otaPoll();
+const BST={MEASURING:'Mõõdan…',ABSENT:'Aku puudub',CHARGING:'⚡ Laeb',FULL:'✓ Täis / laadijal',DISCHARGING:'Tühjeneb',LOW:'⚠ Madal – laadi!',STABLE:'Stabiilne'};
+let bHist=[],bStep=30,bRange=24,bTimer=0;
+function hm(m){return m>=60?Math.floor(m/60)+' h '+(m%60)+' min':m+' min'}
+function showBat(b){if(!b)return;$('batOn').style.display=b.enabled?'':'none';$('batOff').style.display=b.enabled?'none':'';
+ if(document.activeElement!==$('f_bat_en'))$('f_bat_en').checked=b.enabled;$('b_cal').textContent='×'+b.cal.toFixed(4);
+ const absent=b.state=='ABSENT';$('b_pct').textContent=absent?'–':b.pct+' %';$('b_st').textContent=BST[b.state]||b.state;
+ $('b_bar').style.width=(absent?0:b.pct)+'%';$('b_meter').className='meter'+(b.pct<=15?' low':b.pct<=30?' mid':'');
+ $('b_v').textContent=b.v.toFixed(2)+' V';
+ $('b_sl').textContent=b.state=='MEASURING'?'-':(b.slope>0?'+':'')+b.slope.toFixed(1)+' mV/min';
+ $('b_left').textContent=b.min_left>=0?'~'+hm(b.min_left)+' (hinnang)':(b.state=='CHARGING'||b.state=='FULL'?'laadijal':'-');
+ $('b_usb').textContent=b.usb?'jah (laeb USB-st)':'ei / ainult laadija'}
+function drawBat(){const svg=$('b_svg'),W=svg.clientWidth||300,H=150,L=38,R=6,T=8,B=20;
+ const n=Math.min(bHist.length,Math.round(bRange*3600/bStep)),d=bHist.slice(-n);
+ if(d.length<2){svg.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" font-size="12" fill="var(--mut)">Ajalugu koguneb (punkt iga ${bStep} s)</text>`;return}
+ let lo=Math.min(...d),hi=Math.max(...d);if(hi-lo<100){const m=(hi+lo)/2;lo=m-50;hi=m+50}const pad=(hi-lo)*.08;lo-=pad;hi+=pad;
+ const span=bRange*3600,x=i=>L+(W-L-R)*(1-((d.length-1-i)*bStep)/span),y=v=>T+(H-T-B)*(1-(v-lo)/(hi-lo));
+ let g='';for(let k=0;k<=3;k++){const v=lo+(hi-lo)*k/3,yy=y(v).toFixed(1);
+  g+=`<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="var(--line)" stroke-width="1"/><text x="${L-5}" y="${+yy+4}" text-anchor="end" font-size="11" fill="var(--mut)">${(v/1000).toFixed(2)}</text>`}
+ [[0,'-'+bRange+' h'],[.5,bRange>1?'-'+(bRange/2)+' h':'-30 min'],[1,'nüüd']].forEach(([f,t])=>{g+=`<text x="${(L+(W-L-R)*f).toFixed(1)}" y="${H-5}" text-anchor="${f==0?'start':f==1?'end':'middle'}" font-size="11" fill="var(--mut)">${t}</text>`});
+ const pts=d.map((v,i)=>x(i).toFixed(1)+','+y(v).toFixed(1)).join(' ');
+ g+=`<polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+ g+=`<line id="b_x" y1="${T}" y2="${H-B}" stroke="var(--mut)" stroke-width="1" style="display:none"/><circle id="b_dot" r="4" fill="var(--acc)" stroke="var(--card)" stroke-width="2" style="display:none"/>`;
+ svg.innerHTML=g;
+ svg.onpointermove=e=>{const r=svg.getBoundingClientRect(),px=e.clientX-r.left;let i=Math.round(d.length-1-(1-(px-L)/(W-L-R))*span/bStep);
+  i=Math.max(0,Math.min(d.length-1,i));const cx=x(i),cy=y(d[i]),ago=Math.round((d.length-1-i)*bStep/60);
+  const xl=$('b_x'),dot=$('b_dot'),tip=$('b_tip');xl.setAttribute('x1',cx);xl.setAttribute('x2',cx);xl.style.display='';dot.setAttribute('cx',cx);dot.setAttribute('cy',cy);dot.style.display='';
+  tip.style.display='block';tip.style.left=Math.max(50,Math.min(W-50,cx))+'px';tip.textContent=(d[i]/1000).toFixed(2)+' V · '+(ago?hm(ago)+' tagasi':'nüüd')};
+ svg.onpointerleave=()=>{['b_x','b_dot'].forEach(i=>$(i)&&($(i).style.display='none'));$('b_tip').style.display='none'}}
+async function batPoll(){clearTimeout(bTimer);try{const b=await (await api('/api/battery',{cache:'no-store'})).json();bHist=b.hist;bStep=b.step_s;showBat(b.bat);drawBat()}catch(e){}
+ bTimer=setTimeout(batPoll,30000)}
+$('b_rng').onclick=e=>{const h=+e.target.dataset.h;if(!h)return;bRange=h;document.querySelectorAll('#b_rng button').forEach(b=>b.classList.toggle('on',+b.dataset.h===h));drawBat()};
+window.addEventListener('resize',drawBat);
+async function batSave(f,msg){try{const d=await (await api('/api/battery',form(f))).json();toast(d.ok?msg:(d.error||'Viga'));if(d.ok)batPoll();return d.ok}catch(e){}}
+$('f_bat_en').onchange=()=>batSave({en:$('f_bat_en').checked?1:0},$('f_bat_en').checked?'Aku jälgimine sees':'Aku jälgimine väljas');
+$('fBat').onsubmit=e=>{e.preventDefault();const v=$('f_bat_v').value.trim();if(!v){toast('Sisesta mõõdetud pinge');return}
+ batSave({v},'Kalibreeritud').then(o=>{if(o)$('f_bat_v').value=''})};
+$('bCalReset').onclick=e=>{e.preventDefault();batSave({reset_cal:1},'Kalibreering lähtestatud')};
+loadCfg();poll();otaPoll();batPoll();
 </script></body></html>)HTML";
 
 // -----------------------------------------------------------------------------
@@ -346,3 +438,75 @@ h1{margin:0;font-size:20px}.err{color:var(--bad);font-size:14px;min-height:1em}
 </form>
 <script>if(location.search.indexOf('e=1')>=0)document.getElementById('err').textContent='Vale parool';</script>
 </body></html>)HTML";
+
+// -----------------------------------------------------------------------------
+//  Logi (jooksev + eelmine käivitus)
+// -----------------------------------------------------------------------------
+static const char LOG_HTML[] PROGMEM = R"HTML(<!doctype html>
+<html lang="et"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SimCam – logi</title><link rel="stylesheet" href="/style.css">
+<style>
+body{display:flex;flex-direction:column;height:100vh;height:100dvh}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{font-size:18px;margin:0 8px 0 0}
+.sp{flex:1}
+select{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;padding:8px 10px}
+input[type=search]{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;padding:8px 10px;max-width:180px;min-width:0;flex:1}
+#info{font-size:13px;color:var(--mut);padding:6px 16px;border-bottom:1px solid var(--line)}
+#log{flex:1;overflow:auto;margin:0;padding:10px 16px;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+#log .W{color:var(--warn)}#log .E{color:var(--bad);font-weight:600}#log .t{color:var(--mut)}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+</style></head><body>
+<header><a class="btn" href="/settings">← Seaded</a><h1>Logi</h1>
+ <select id="src"><option value="cur">See käivitus</option><option value="prev">Eelmine käivitus</option></select>
+ <select id="lvl"><option value="">Kõik</option><option value="WE">Hoiatused + vead</option><option value="E">Ainult vead</option></select>
+ <input type="search" id="q" placeholder="Filtreeri…">
+ <span class="sp"></span>
+ <button id="bClock" title="Näita kellaaega (brauseri kellast)">🕒</button>
+ <button id="bPause">⏸ Peata</button>
+ <a class="btn" id="bDl" href="/api/log?dl=1">⬇ Laadi alla</a>
+ <button class="dng" id="bClr">Tühjenda</button>
+</header>
+<div id="info">…</div>
+<pre id="log"></pre>
+<div class="toast" id="toast"></div>
+<script>
+const $=id=>document.getElementById(id);
+function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2500)}
+async function api(u,o){const r=await fetch(u,o);if(r.status==401){location.href='/login';throw 0}return r}
+let lines=[],pos=0,paused=false,clock=false,up0=0,t0=0,timer=0;
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const RE=/^\[\s*(\d+)\]\[([IWE])\]/;
+function stamp(ms){if(!clock||!up0)return null;const d=new Date(t0-(up0-ms));
+ return d.toLocaleDateString('et-EE',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('et-EE')}
+function fmt(l){const m=RE.exec(l);let h=esc(l);
+ if(m){const s=stamp(+m[1]);if(s)h=`<span class="t">${s}</span> `+h;return `<span class="${m[2]}">${h}</span>`}return h}
+function render(){const lv=$('lvl').value,q=$('q').value.toLowerCase(),box=$('log');
+ const atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<40;
+ box.innerHTML=lines.filter(l=>{if(lv){const m=RE.exec(l);if(!m||lv.indexOf(m[2])<0)return false}return !q||l.toLowerCase().includes(q)}).map(fmt).join('\n');
+ if(atEnd||!paused)box.scrollTop=box.scrollHeight}
+const RST={POWERON:'toide sisse',EXT:'väline reset',SW:'tarkvaraline (taaskäivitus/uuendus)',PANIC:'KOKKUJOOKSMINE (panic)',
+ INT_WDT:'KOKKUJOOKSMINE (katkestuse watchdog)',TASK_WDT:'KOKKUJOOKSMINE (taski watchdog)',WDT:'KOKKUJOOKSMINE (watchdog)',
+ DEEPSLEEP:'ärkamine süvaunest',BROWNOUT:'TOITEPINGE LANGUS (brownout)',OTHER:'teadmata'};
+function info(r,extra){const w=r.headers.get('X-Log-Warn'),e=r.headers.get('X-Log-Err');
+ $('info').textContent=`Taaskäivituse põhjus: ${RST[r.headers.get('X-Reset-Reason')]||'-'} · hoiatusi ${w||0}, vigu ${e||0}`+(extra||'')}
+async function load(){clearTimeout(timer);const prev=$('src').value=='prev';
+ try{const r=await api(prev?'/api/log?prev=1':'/api/log?since='+pos,{cache:'no-store'});
+  const up=+r.headers.get('X-Uptime-Ms');if(up){up0=up;t0=Date.now()}
+  const txt=await r.text();
+  if(prev){lines=txt?txt.replace(/\n$/,'').split('\n'):[];info(r,' · eelmise käivituse viimased read (alles ainult tarkvaralise taaskäivituse/krahhi järel)');
+   if(!txt)$('log').textContent='Eelmise käivituse logi pole (seade sai vahepeal toite).';else render();return}
+  const nx=+r.headers.get('X-Log-Next');if(nx<pos){lines=[]}pos=nx;
+  if(txt){lines=lines.concat(txt.replace(/\n$/,'').split('\n'));if(lines.length>3000)lines=lines.slice(-3000);render()}
+  info(r)}catch(e){if(e!==0)$('info').textContent='Seade ei vasta'}
+ if(!paused)timer=setTimeout(load,2000)}
+$('src').onchange=()=>{lines=[];pos=0;$('log').textContent='';
+ $('bDl').href=$('src').value=='prev'?'/api/log?prev=1&dl=1':'/api/log?dl=1';load()};
+$('lvl').onchange=render;$('q').oninput=render;
+$('bClock').onclick=()=>{clock=!clock;$('bClock').classList.toggle('on',clock);render()};
+$('bPause').onclick=()=>{paused=!paused;$('bPause').textContent=paused?'▶ Jätka':'⏸ Peata';if(!paused)load()};
+$('bClr').onclick=async()=>{if(!confirm('Tühjendada jooksev logi?'))return;
+ try{await api('/api/log/clear',{method:'POST'});lines=[];$('log').textContent='';toast('Logi tühjendatud');load()}catch(e){}};
+load();
+</script></body></html>)HTML";

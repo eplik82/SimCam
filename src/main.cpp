@@ -2,7 +2,7 @@
 //  SimCam – LilyGO T-SIMCAM (ESP32-S3) LTE kaamera püsivara
 // =============================================================================
 //  Käivitusjärjestus:
-//   1. USB Serial logi (115200)
+//   1. Logi: USB Serial (115200) + mälupuhver (veebiliideses ⚙ → Logi)
 //   2. Plaadi perifeeria toide (GPIO1 = HIGH)
 //   3. Kaamera + autofookus (Camera_Manager)
 //   4. RTSP server :554 ja veebiliides :80 (kuulavad kõigil liidestel; hakkavad
@@ -24,6 +24,7 @@
 #include "settings.h"
 #include "wifi_manager.h"
 #include "ota.h"
+#include "battery.h"
 
 static const char *TAG = "MAIN";
 
@@ -32,6 +33,7 @@ void setup() {
     // Oota kuni 3 s, et USB CDC jõuaks arvutiga ühenduda (logid ei kao)
     uint32_t t0 = millis();
     while (!Serial && millis() - t0 < 3000) delay(10);
+    Log::begin();                     // logipuhver (veebis /log) + eelmise käivituse logi
 
     LOGI(TAG, "==============================================");
     LOGI(TAG, " SimCam – LilyGO T-SIMCAM LTE kaamera");
@@ -46,6 +48,7 @@ void setup() {
     delay(200);
 
     Settings::load();                 // NVS seaded (WiFi, LTE, pildi pööre)
+    Battery::begin();                 // aku pinge (GPIO3) ja olek
 
     // Kaamera enne modemit: esp_camera vajab suurt DMA/PSRAM plokki,
     // mille eraldamine on kõige kindlam kohe käivitumisel.
@@ -78,13 +81,16 @@ void loop() {
         last = millis();
         LTE::Status m = LTE::status();
         WifiMgr::Status w = WifiMgr::status();
+        Battery::Status b = Battery::status();
+        char bat[48] = "";
+        if (b.enabled) snprintf(bat, sizeof(bat), " | aku %.2f V %d%% %s", b.voltage, b.percent, Battery::stateName(b.state));
         LOGI(TAG, "WiFi=%s %s (%d dBm) AP=%d kl. | LTE=%s IP=%s op=%s CSQ=%d (%d dBm) RSRP=%d | cam %.1f fps %u kB AF=%s | "
-                  "rtsp=%d web=%d | heap=%u psram=%u | %.1f°C",
+                  "rtsp=%d web=%d | heap=%u psram=%u | %.1f°C%s",
              w.staConnected ? w.staSsid : "-", w.staIp, w.staRssi, w.apClients,
              LTE::enabled() ? LTE::stateName(m.state) : "OFF", m.ip, m.op, m.csq, m.rssiDbm, m.rsrpDbm,
              Camera::fps(), (unsigned)(Camera::lastFrameBytes() / 1024), Camera::afStatus(),
              RtspServer::clients(), WebUI::streamClients(),
-             ESP.getFreeHeap(), ESP.getFreePsram(), temperatureRead());
+             ESP.getFreeHeap(), ESP.getFreePsram(), temperatureRead(), bat);
     }
     WifiMgr::loop();
     delay(10);

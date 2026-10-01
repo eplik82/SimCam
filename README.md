@@ -12,8 +12,10 @@ release'ist (FOTA)**.
 | MJPEG voog    | `http://<IP>/stream`                       |
 | Hetktõmmis    | `http://<IP>/capture`                      |
 | Olek (JSON)   | `http://<IP>/api/status`                   |
+| Logi          | `http://<IP>/log` (tekstina `http://<IP>/api/log`) |
 
-> ⚠️ **MikroTik R11e-LTE selle plaadiga EI tööta ja võib rikki minna** –
+> ⚠️ **MikroTik R11e-LTE ja Sierra Wireless MC7304 (ning teised ainult USB-ga
+> mPCIe modemid) selle plaadiga EI tööta ja võivad rikki minna** –
 > vt [Modemi ühilduvus](#modemi-ühilduvus).
 
 ---
@@ -39,13 +41,18 @@ release'ist (FOTA)**.
   ise sisse (ja pärast ühenduse taastumist välja).
 * **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel või soovi korral
   automaatselt; eelmine versioon taastatakse, kui uus ei käivitu.
+* **Aku** (TP4056 laadija plaadil): täituvus %, pinge, olek (laeb / tühjeneb /
+  täis), hinnanguline tööaeg ja 24 h pingegraafik – vt [Aku](#aku).
+* **Logi veebiliideses** (⚙ → 📄 Logi): seadme logi reaalajas, filtreerimine
+  taseme ja teksti järgi, allalaadimine; pärast kokkujooksmist ka **eelmise
+  käivituse viimased read** ja taaskäivituse põhjus – vt [Logi](#logi).
 * Kõik seaded (WiFi, hotspot, LTE, parool, pööre) salvestatakse seadme NVS-i –
   **lähtekoodis pole paroole ega operaatori andmeid**.
 
 ## Esmane seadistamine
 
-1. Laadi püsivara plaadile (vt [Paigaldus](#paigaldus)) või võta valmis fail
-   [Releases](../../releases) lehelt.
+1. Paigalda püsivara: Windowsi `simcam-flasher-<versioon>.exe` või brauseris
+   <https://eplik82.github.io/SimCam/> (vt [Paigaldus](#paigaldus)).
 2. Ühenda telefon WiFi võrku **SimCam**, parool **`simcam2026`**.
    Kaamera leht avaneb ise (kui mitte, ava `http://4.3.2.1/`).
 3. Logi sisse parooliga **`simcam`**.
@@ -77,15 +84,45 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.5.1
+git push origin v1.5.1
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
 sildist) ja loob release'i failidega `simcam-firmware.bin` (FOTA),
-`simcam-factory.bin` (esmane USB-laadimine aadressile 0x0) ja `SHA256SUMS.txt`.
+`simcam-factory.bin` (esmane USB-laadimine aadressile 0x0),
+`simcam-flasher-<versioon>.exe` (Windowsi paigaldaja) ja `SHA256SUMS.txt`
+ning avaldab brauseri-paigalduslehe (GitHub Pages). Sildi asemel võib kasutada ka
+Actions → Firmware → Run workflow (sisend `tag`).
 
 ## Paigaldus
+
+### Uus seade – ilma arenduskeskkonnata
+
+**Windows (.exe):** laadi [Releases](../../releases/latest) lehelt
+`simcam-flasher-<versioon>.exe`, ühenda T-SIMCAM USB-C kaabliga ja käivita fail.
+Programm leiab plaadi pordi ise (Espressif USB, VID `303A`), küsib, kas flash
+kustutada (uuel plaadil: jah), ja paigaldab püsivara (see on .exe-s sees).
+Allkirjastamata programmi puhul näitab Windows SmartScreen hoiatust →
+„Rohkem teavet" → „Käivita ikkagi".
+
+**Brauserist (Chrome/Edge):** <https://eplik82.github.io/SimCam/> → „Paigalda SimCam"
+→ vali plaadi port → „Erase device" (uuel plaadil). Kasutab
+[ESP Web Tools](https://esphome.github.io/esp-web-tools/)-i (Web Serial); leht
+avaldatakse automaatselt koos release'iga, kui release tehakse `main` harust või
+sildist ja repos on Pages sisse lülitatud (Settings → Pages → Source:
+**GitHub Actions**).
+
+**macOS / Linux:** `pip install esptool==4.8.1` ja
+`python tools/flasher/simcam_flasher.py simcam-factory.bin` (või otse
+`esptool.py --chip esp32s3 write_flash 0x0 simcam-factory.bin`).
+
+Kui plaat ei ilmu pordina või ühendus ei õnnestu: hoia **BOOT** all, vajuta
+**RESET**, lase BOOT lahti ja proovi uuesti; pärast paigaldust vajuta RESET.
+Edasi: [Esmane seadistamine](#esmane-seadistamine); hilisemad uuendused tulevad
+üle võrgu (FOTA).
+
+### Lähtekoodist (PlatformIO)
 
 Vajalik: [PlatformIO](https://platformio.org/) (VS Code laiendus või `pip install platformio`).
 Esimesel ehitusel laaditakse alla pioarduino platvorm ja Arduino-ESP32 3.x.
@@ -93,14 +130,6 @@ Esimesel ehitusel laaditakse alla pioarduino platvorm ja Arduino-ESP32 3.x.
 ```bash
 pio run -t upload          # kompileeri + laadi USB kaudu
 pio device monitor         # logi 115200 baud
-```
-
-Kui plaat ei ilmu COM-pordina: hoia **BOOT** all, vajuta **RESET**, lase BOOT lahti.
-
-Valmis failiga (ilma PlatformIO-ta):
-
-```bash
-esptool.py --chip esp32s3 write_flash 0x0 simcam-factory.bin
 ```
 
 ## Riistvara ja viigud
@@ -156,6 +185,60 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
   `agc_gain`, `brightness`, `hmirror`, `vflip`, `framesize`, `quality`, `ir`.
   Ilma parameetriteta tagastab kõik seaded.
 
+## Aku
+
+T-SIMCAM V1.3 plaadil on Li-ion aku pistik (P2), **TP4056** laadija (laadimisvool
+~600 mA, PROG = 2 kΩ; laeb USB-C toitest) ja aku pinge jagur 100 k / 100 k →
+**GPIO3** (`BAT_ADC`).
+
+Veebiliideses: ⚙ → **🔋 Aku**, avalehel pildi all `🔋 63 %` (`⚡` laadimisel,
+`🪫` madal).
+
+| Näit | Kuidas saadakse |
+|---|---|
+| Pinge | GPIO3 ADC (16 lugemise keskmine iga 2 s, silutud), × 2 jaguri järgi, × kalibreerimistegur |
+| Täituvus % | Li-ion tühjenemiskõvera järgi (4,20 V = 100 %, 3,30 V = 0 %) |
+| Olek | pinge muutus viimase 10 min jooksul: tõuseb → **Laeb**, langeb → **Tühjeneb** (≤ 15 % → **Madal**), ≥ 4,15 V → **Täis / laadijal** |
+| Tööaeg | viimase 30 min langus → aeg, kuni pinge jõuab 3,40 V-ni (hinnang) |
+| Graafik | punkt iga 30 s järel, viimased 24 h (1 h / 6 h / 24 h vaade) |
+| USB arvutiga | ESP32 USB näeb arvutit (siis aku laeb); tavaline USB-laadija ei paista |
+
+**Voolu ei saa mõõta:** plaadil pole voolu mõõtmist ning TP4056 oleku viigud
+(CHRG/STDBY) on ühendatud ainult plaadi LED-iga, mitte ESP32-ga. Seepärast
+tuletatakse olek pinge muutumisest – esimese ~3 min jooksul on olek „Mõõdan…".
+Laadimise ajal on pinge (ja %) tegelikust kõrgem. Voolu ja võimsuse mõõtmiseks
+saab akujuhtmesse lisada nt INA219/INA226 mooduli (vajab I²C viike ja tarkvara
+tuge).
+
+**Kalibreerimine:** ESP32 ADC viga on mõni protsent. Mõõda aku pinge
+multimeetriga ja sisesta see ⚙ → Aku → „Aku seaded ja kalibreerimine" →
+„Kalibreeri". Seal saab aku jälgimise ka välja lülitada (kui akut pole).
+Ilma akuta näitab laadija väljund ~4,2 V, s.t „Täis".
+
+API: `GET /api/battery` (olek + ajalugu mV-des), olek ka `/api/status` → `bat`;
+`POST /api/battery` väljadega `en=0|1`, `v=<volti>` (kalibreerimine), `reset_cal=1`.
+
+## Logi
+
+Seadme logi näeb ilma USB-kaablita: ⚙ → **📄 Logi** (`http://<IP>/log`).
+
+* **See käivitus** – viimased ~64 kB logiridu (PSRAM-is ringpuhver, vanemad read
+  kirjutatakse üle). Uued read tulevad juurde iga 2 s järel; ⏸ peatab.
+* **Eelmine käivitus** – viimased ~3 kB eelmise käivituse logist. Hoitakse RTC
+  mälus, mis jääb alles tarkvaralise taaskäivituse, püsivara uuenduse,
+  kokkujooksmise ja watchdogi korral (toite kadumisel kustub).
+* **Taaskäivituse põhjus** (toide, tarkvaraline, KOKKUJOOKSMINE, brownout …) ning
+  hoiatuste/vigade arv on näha ka seadete lehel (⚙ → Süsteem).
+* Filtrid: kõik / hoiatused + vead / ainult vead ning tekstiotsing. 🕒 näitab ridade
+  juures kellaaega (arvutatud brauseri kellast, seadmel endal kella pole).
+* **⬇ Laadi alla** salvestab logi failina (`simcam-<versioon>-logi.log`).
+* Logisse jõuavad kõigi moodulite read (`MAIN`, `CAM`, `WIFI`, `LTE`, `RTSP`, `WEB`,
+  `OTA` …) ja ESP-IDF komponentide hoiatused/vead (`IDF`). Sama logi tuleb endiselt
+  ka USB Seriali (115200).
+* Skriptidele: `curl -u admin:<parool> "http://<IP>/api/log"` (kogu logi),
+  `?since=<N>` – ainult uued read (N = eelmise vastuse päis `X-Log-Next`),
+  `?prev=1` – eelmine käivitus, `POST /api/log/clear` – tühjenda.
+
 ## Ribalaius (LTE)
 
 Modem on ESP32-ga ühendatud **UART-i** kaudu, seega piirab läbilaskevõimet UART:
@@ -195,11 +278,37 @@ Modem on ESP32-ga ühendatud **UART-i** kaudu, seega piirab läbilaskevõimet UA
 2. Ka õige toite korral ei saa ESP32 kaardiga suhelda (USB vs UART) – püsivaraga
    seda lahendada ei saa.
 
+### Sierra Wireless AirPrime MC7304 – ei sobi
+
+MC7304 on hea LTE Cat 3 kaart (Euroopa sagedused B1/B3/B7/B8/B20), kuid sama
+põhjusel nagu R11e-LTE ei saa ESP32 sellega T-SIMCAM-i pesas suhelda:
+
+| | MC7304 | T-SIMCAM mPCIe pesa |
+|---|---|---|
+| Andmeliides | **ainult USB 2.0** (QMI/MBIM andmeside, AT-, DM- ja NMEA-pordid on USB kaudu); UART-i mPCIe pistikul **pole** | **UART** mPCIe viikudel 17/19; USB D+/D− (36/38) **pole ESP32-ga ühendatud** |
+| Viigud 17/19 | reserveeritud / ühendamata | ESP32 UART (GPIO46/45) |
+| Toide | mPCIe standard **3,3 V** (umbes 3,0–3,6 V) | **4,2 V** (DVDD4V2, SIM7600 jaoks) |
+| Sisselülitus | käivitub toite saamisel (`W_DISABLE#`, viik 20), PWRKEY-d pole | GPIO48 → viik 6 (standardis +1,5 V) |
+
+1. **Võta MC7304 T-SIMCAM-i pesast välja.** 4,2 V on üle kaardi lubatud
+   toitepinge – kaart võib kuumeneda ja rikki minna (kui see on juba pesas olnud,
+   kontrolli enne muud kasutust, kas see töötab nt USB-adapteriga arvutis).
+2. ⚙ → Mobiilivõrk → võta **„LTE modem sees"** maha (siis ei saadeta pessa
+   PWRKEY impulsse ega AT-käske).
+3. Püsivara muudatusega seda lahendada ei saa: ESP32 ja kaardi vahel puudub
+   ühine liides (kaardil USB, pesal UART), lisaks on toide vale.
+
+MC7304 kasutamiseks on vaja seadet, millel on mPCIe pesa koos **USB host**
+liidese ja 3,3 V toitega (nt ruuter või USB–mPCIe adapter arvutis); ESP32-S3-ga
+otse ühendades tuleks ehitada eraldi plaat (3,3 V regulaator ≥ 2 A + USB OTG
+host + QMI/MBIM draiver), mida see projekt ei toeta.
+
 **Sobib:** LilyGO **T-PCIe SIM7600E-H** (Euroopa sagedused B1/B3/B7/B8/B20),
 `MODEM_TYPE_SIM7600`, CMUX, kuni 3 Mbit/s UART. `MODEM_TYPE_GENERIC` sobib muu
 UART-iga 3GPP modemiga, mis talub 4,2 V toidet.
 
 Allikad: [MikroTik R11e-LTE](https://mikrotik.com/product/r11e_lte),
+Sierra Wireless *AirPrime MC7304 Product Technical Specification*,
 [OpenWrt #11400](https://github.com/openwrt/openwrt/issues/11400),
 [T-SIMCAM skeem](https://github.com/Xinyuan-LilyGO/LilyGo-Camera-Series/tree/master/schematic),
 [LilyGO T-SIMCAM wiki](https://wiki.lilygo.cc/products/t-sim-series/t-simcam/).
@@ -211,12 +320,13 @@ Allikad: [MikroTik R11e-LTE](https://mikrotik.com/product/r11e_lte),
 | `PSRAM puudub!` | `board_build.arduino.memory_type = qio_opi` peab olema `platformio.ini`-s |
 | `esp_camera_init ebaõnnestus: 0x105` | kaamera kaabel lahti või vale suunaga |
 | Hotspoti leht ei avane ise | ava `http://4.3.2.1/`; lülita telefonis välja „Privaatne DNS"/VPN |
-| `Modem ei vasta UART-il` | vale kaart (nt R11e-LTE) või modem pole pesas korralikult |
+| `Modem ei vasta UART-il` | vale kaart (USB-ainult, nt R11e-LTE või MC7304 – eemalda!) või modem pole pesas korralikult |
 | `APN on seadistamata` / `PIN on seadistamata` | ⚙ → Mobiilivõrk |
 | `SIM PIN vale!` | paranda PIN seadetes (sama valet PIN-i enam ei proovita) |
 | `SIM on PUK lukus!` | ava SIM telefonis PUK-koodiga |
 | LTE IP pole see, mida ootasid | APN vale või staatilise IP teenus pole SIM-ile aktiveeritud |
 | FOTA: „GitHubiga ei saanud ühendust" | seadmel pole internetti (ainult hotspot ei piisa) |
+| Seade taaskäivitub ise | ⚙ → 📄 Logi → „Eelmine käivitus": põhjus ja viimased read enne taaskäivitust |
 | Brownout LTE ühendumisel | modem tarbib kuni 2 A tippe – kasuta korralikku 5 V toidet |
 
 ## Projekti struktuur
@@ -225,6 +335,8 @@ Allikad: [MikroTik R11e-LTE](https://mikrotik.com/product/r11e_lte),
 SimCam/
 ├── platformio.ini            PlatformIO (pioarduino, Arduino-ESP32 3.x, 16 MB, OPI PSRAM)
 ├── tools/version.py          versioon git sildist → SIMCAM_VERSION
+├── tools/flasher/            Windowsi paigaldaja (simcam-flasher-*.exe allikas)
+├── web-flasher/              brauseri-paigaldusleht (GitHub Pages, ESP Web Tools)
 ├── .github/workflows/        CI: ehitus + release (silt v*)
 └── src/
     ├── config.h              viigud, pordid, vaikeseaded (ilma saladusteta)
@@ -236,8 +348,9 @@ SimCam/
     ├── wifi_manager.*        WiFi klient + hotspot + captive DNS + mDNS
     ├── modem_lte.*           LTE: PWRKEY, PIN, APN, PPP/CMUX, taastamine
     ├── ota.*                 FOTA GitHubi release'ist + tagasipööramine
+    ├── battery.*             aku pinge (GPIO3), täituvus, olek, ajalugu
     ├── settings.*            NVS seaded
     ├── auth.*                parool, sessiooniküpsis, HTTP Basic
-    └── log.h                 logimakrod (USB Serial 115200)
+    └── log.*                 logi: USB Serial + mälupuhver (/log) + eelmise käivituse logi (RTC)
 ```
 
