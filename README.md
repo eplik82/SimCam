@@ -88,8 +88,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.8.3
-git push origin v1.8.3
+git tag v1.8.4
+git push origin v1.8.4
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -218,7 +218,7 @@ samad viigud on LilyGO tehasetarkvaras). Mikrofon on vaikimisi **väljas**:
 * **RTSP:** sama URL (`rtsp://admin:<parool>@<IP>:554/live`) – VLC/ffplay mängivad
   pilti ja heli koos. Pilt ja heli seotakse ühisele ajateljele RTCP Sender Reportiga
   (iga 5 s). Aeglases võrgus jäetakse üle 0,4 s maha jäänud heli vahele.
-* Mikrofoni sisselülitamisel proovib seade ~2,5 s jooksul läbi I²S taktid (48/32/16 kHz →
+* Mikrofoni sisselülitamisel proovib seade ~4 s jooksul läbi I²S taktid (48/32/16 kHz →
   BCLK 3,07/2,05/1,02 MHz) ja vormingud (Philips/MSB) ning valib selle, kus üks kanal
   annab tüüpilist mikrofoni signaali (−100…−20 dBFS) ja teine on vaikne (andmeliinil on
   10 kΩ maandustakisti). Tulemused on logis (`MIC`, „Proov …"); uuesti proovimiseks

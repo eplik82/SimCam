@@ -89,14 +89,18 @@ static void stopI2s() {
 }
 
 // Kanali statistika: dispersioon (dBFS 24-bit skaalal) ja nullide osakaal
-struct ChStat { double s = 0, q = 0; uint32_t n = 0, zeros = 0; };
+// + bitimaskid diagnostikaks: millised bitid on kunagi 1 (OR) / alati 1 (AND).
+// Õige I²S 24-bit andmete puhul on alumised 8 bitti (täide) alati 0.
+struct ChStat { double s = 0, q = 0; uint32_t n = 0, zeros = 0, orm = 0, andm = 0xFFFFFFFF; };
 static void statAdd(ChStat *st, const int32_t *in, int frames) {
     for (int i = 0; i < frames; i++)
         for (int c = 0; c < 2; c++) {
             int32_t raw = in[2 * i + c];
             double v = raw >> 8;
             st[c].s += v; st[c].q += v * v; st[c].n++;
-            if ((raw >> 8) == 0 || (raw >> 8) == -1) st[c].zeros++;
+            st[c].orm |= (uint32_t)raw;
+            st[c].andm &= (uint32_t)raw;
+            if (raw == 0) st[c].zeros++;
         }
 }
 static float statDb(const ChStat &st) {
@@ -116,10 +120,10 @@ static int probe(int32_t *in) {
         uint32_t t0 = millis();
         int32_t firstL = 0, firstR = 0;
         bool first = true;
-        while (millis() - t0 < 400) {
+        while (millis() - t0 < 600) {
             size_t got = 0;
             if (i2s_channel_read(s_rx, in, frameIn * 8, &got, 200) != ESP_OK || !got) continue;
-            if (millis() - t0 < 100) continue;                  // mikrofoni käivitusaeg
+            if (millis() - t0 < 300) continue;                  // mikrofoni käivitusaeg
             if (first) { firstL = in[20]; firstR = in[21]; first = false; }
             statAdd(st, in, got / 8);
         }
@@ -128,8 +132,11 @@ static int probe(int32_t *in) {
         // Aktiivne kanal: mikrofoni müra/heli −100…−20 dBFS; vaikne: < −95 dBFS
         float act = l > r ? l : r, quiet = l > r ? r : l;
         float score = (act > -100 && act < -20 ? 50 : 0) + (quiet < -95 ? 50 : 0) - fabsf(act + 60) / 10;
-        LOGI(TAG, "Proov %s: vasak %.0f dBFS, parem %.0f dBFS (näide L %08lX R %08lX)%s",
-             CFGS[k].name, l, r, (unsigned long)firstL, (unsigned long)firstR, score >= 90 ? " ✓" : "");
+        LOGI(TAG, "Proov %s: vasak %.0f dBFS, parem %.0f dBFS%s", CFGS[k].name, l, r, score >= 90 ? " ✓" : "");
+        LOGI(TAG, "  bitid L: OR %08lX AND %08lX null %u%% näide %08lX | R: OR %08lX AND %08lX null %u%% näide %08lX",
+             (unsigned long)st[0].orm, (unsigned long)st[0].andm, (unsigned)(st[0].n ? st[0].zeros * 100 / st[0].n : 0),
+             (unsigned long)firstL, (unsigned long)st[1].orm, (unsigned long)st[1].andm,
+             (unsigned)(st[1].n ? st[1].zeros * 100 / st[1].n : 0), (unsigned long)firstR);
         if (score > bestScore) { bestScore = score; best = k; s_autoChan = l > r ? 0 : 1; }
     }
     if (bestScore < 90) {
@@ -149,7 +156,7 @@ static void task(void *) {
     ChStat cst[2];
     double winSq = 0; int winN = 0; int winPeak = 0;
 
-    if (in && s_cfg < 0) s_cfg = probe(in);   // ~2,5 s; tulemus logis
+    if (in && s_cfg < 0) s_cfg = probe(in);   // ~4 s; tulemus logis
     const I2sCfg &cfg = CFGS[s_cfg < 0 ? 0 : s_cfg];
     if (!in || !s_run || !startI2s(cfg)) {
         if (s_run) LOGE(TAG, "I²S käivitamine ebaõnnestus");
