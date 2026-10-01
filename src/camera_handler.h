@@ -62,5 +62,6 @@ size_t lastFrameBytes();
 void addConsumer();           // loendab aktiivseid vaatajaid
 void removeConsumer();
 int consumers();
+bool sleeping();              // andur ooterežiimis (CAM_IDLE_SLEEP_MS ilma vaatajata)
 
 }  // namespace Camera

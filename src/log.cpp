@@ -32,6 +32,8 @@ static char    *s_prev;                // eelmise käivituse logi (lineaarne)
 static size_t   s_prevLen;
 static char     s_line[512];           // vormindamine (mutexi all)
 static char     s_idf[256];
+static char     s_ser[514];            // USB väljundi koopia (s_serMtx all)
+static SemaphoreHandle_t s_serMtx;
 static uint32_t s_warn, s_err;
 static vprintf_like_t s_idfPrev;
 static const char *s_reset = "-";
@@ -153,6 +155,7 @@ void begin() {
 
     s_buf = (char *)heap_caps_malloc(LOG_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_mtx = xSemaphoreCreateRecursiveMutex();
+    s_serMtx = xSemaphoreCreateMutex();
     s_idfPrev = esp_log_set_vprintf(idfVprintf);
 
     LOGI("LOG", "Taaskäivituse põhjus: %s%s", s_reset,
@@ -174,8 +177,17 @@ void write(const char *lvl, const char *tag, const char *fmt, ...) {
         count(lvl[0]);
         s_line[n - 1] = '\r';
         s_line[n++] = '\n';
-        Serial.write((const uint8_t *)s_line, n);
-        unlock();
+        // USB väljund eraldi lukuga: kui arvutis keegi porti ei loe, blokeerib
+        // Serial.write kuni ajalõpuni – siis ei tohi veebilogi lukk kinni olla,
+        // muidu jäid teiste taskide read veebilogist välja. Hõivatud → jäta vahele.
+        if (s_serMtx && xSemaphoreTake(s_serMtx, 0) == pdTRUE) {
+            memcpy(s_ser, s_line, n);
+            unlock();
+            Serial.write((const uint8_t *)s_ser, n);
+            xSemaphoreGive(s_serMtx);
+        } else {
+            unlock();
+        }
     } else {                                   // enne begin()-i või ISR-ist
         Serial.printf("[%9lu][%s][%s] ", (unsigned long)millis(), lvl, tag);
         char tmp[192];

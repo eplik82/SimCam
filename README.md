@@ -28,7 +28,12 @@ release'ist (FOTA)**.
   „Fookus", pööramine 0°/180° (teeb sensor, kehtib ka RTSP-s), madal viivitus –
   aeglase võrgu korral jäetakse kaadrid vahele, puhvrit ei kogune.
 * **Pealeht:** pildi all tegelik kaadrisagedus ja võrgukiirus (kB/s, Mbit/s), mida
-  just see brauser saab.
+  just see brauser saab. Telefon horisontaalis → pilt üle kogu ekraani, info ja nupud
+  jäävad poolläbipaistvalt pildi peale (brauseri täisekraan lülitub sisse pööramisel
+  või esimesel puudutusel; iPhone'i Safari peidab ainult lehe enda ääred).
+* **Aku säästmine:** kui keegi pilti ei vaata (veeb, RTSP, hetktõmmis), läheb kaamera
+  15 s pärast ooterežiimi (OV5640 tarkvaraline standby) ja mikrofon peatub 10 s
+  pärast. Uus vaataja äratab mõlemad – esimene kaader ~2 s.
 * **RTSP server** (port 554): RTP/JPEG (RFC 2435), UDP ja TCP interleaved,
   kuni 4 klienti. Testitud VLC ja FFmpeg-iga.
 * **Veebiliides:** avalehel ainult pilt ja nupud (peata/jätka, 0°/180°,
@@ -213,7 +218,6 @@ ESP32-S3 riistvaralise PDM→PCM muunduriga (v1.8.5). Mikrofon on vaikimisi **v�
 | Võimendus | 0–40 dB (vaikimisi 24 dB). Vaikne heli → suurenda; tipp punane → vähenda |
 | Helikvaliteet | **G.711 µ-law 8 kHz** (64 kbit/s, soovitatav, toetavad kõik mängijad ja salvestid) või **L16 16 kHz** (256 kbit/s, selgem) |
 | Heli RTSP voos | lisab RTSP-sse helirajad (`track2`); rakendub uutele ühendustele |
-| Mikrofoni kanal | **automaatne** (vaikimisi), vasak või parem. Kaardil on mõlema kanali tase – õige on see, mille tase rääkides muutub; vale kanal annab ainult sahinat |
 
 * **Brauseris:** avalehel 🔈/🔊 nupp (heli algab alles vajutusel – brauserid ei luba
   heli automaatselt), pildi all helitaseme riba; viivitus ~0,2–0,4 s. Seadete lehel
@@ -228,6 +232,13 @@ ESP32-S3 riistvaralise PDM→PCM muunduriga (v1.8.5). Mikrofon on vaikimisi **v�
 * Heli salvestamisel arvesta teiste inimeste privaatsusega.
 
 ## Aku
+
+**Säästurežiim (v1.9.0):** kaamera andur ja mikrofon töötavad ainult siis, kui
+keegi pilti vaatab (pealeht, RTSP, `/capture`) või heli kuulab („Kuula").
+15 s pärast viimast vaatajat lülitub OV5640 ooterežiimi (register 0x3008 bitt 6,
+andur tarbib siis vaid mikroampreid) ja hõivetask seisab; mikrofon peatub 10 s
+pärast. Ajad: `CAM_IDLE_SLEEP_MS`, `MIC_IDLE_STOP_MS` failis `config.h`. Ootel
+näitab olekuleht kaamera FPS-i 0 ja mikrofoni „ootel".
 
 T-SIMCAM V1.3 plaadil on Li-ion aku pistik (P2), **TP4056** laadija (laadimisvool
 ~600 mA, PROG = 2 kΩ; laeb USB-C toitest) ja aku pinge jagur 100 k / 100 k →

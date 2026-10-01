@@ -125,6 +125,9 @@
 #define CAM_XCLK_HZ          20000000    // OV5640/OV2640 jaoks 20 MHz
 #define CAM_FB_COUNT         2           // topeltpuhver PSRAM-is
 #define CAM_MAX_FPS          15          // hõivatud kaadrite ülempiir
+#define CAM_IDLE_SLEEP_MS    15000       // nii kaua ilma vaatajata → andur ooterežiimi (aku)
+#define CAM_WAKE_DROP_MS     400         // ärkamisel jäetakse kaadrid vahele (säri kohandub)
+#define MIC_IDLE_STOP_MS     10000       // mikrofon peatub nii kaua pärast viimast vaatajat/kuulajat
 #define CAM_AF_CONTINUOUS    1           // 1 = pidev autofookus, 0 = ainult nupuga
 // Pildi pööre (vaikimisi; muudetav veebiliidesest): 0 või 180 (teeb sensor ise)
 #define CAM_ROTATION_DEFAULT 0

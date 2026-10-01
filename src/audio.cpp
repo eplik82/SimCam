@@ -5,6 +5,7 @@
 #include "config.h"
 #include "settings.h"
 #include "log.h"
+#include "camera_handler.h"
 
 #include <math.h>
 #include "driver/i2s_pdm.h"
@@ -37,8 +38,8 @@ static volatile uint32_t s_frameMs;        // millis() viimase kaadri lõpus
 static volatile uint32_t s_framePos;       // s_wpos samal hetkel
 static volatile float    s_gain = 1.0f;    // lineaarne
 static volatile float    s_level = -90, s_peak = -90;
-static volatile int      s_chanSetting = 2; // 0 = vasak, 1 = parem, 2 = automaatne
-static volatile int      s_chan = 0;       // tegelikult kasutatav kanal
+static volatile int      s_chan = 1;       // kasutatav kanal (valitakse automaatselt)
+static volatile int      s_listeners = 0;  // brauseri helivood (/audio)
 static volatile float    s_chanDb[2] = {-120, -120};
 static volatile bool     s_ok;             // I²S PDM käivitus õnnestus
 static int               s_autoChan = 1;   // aktiivne kanal (mõõdetakse jooksvalt)
@@ -105,24 +106,28 @@ static void task(void *) {
         vTaskDelete(nullptr);
         return;
     }
-    s_chan = s_chanSetting == 2 ? s_autoChan : s_chanSetting;
+    s_chan = s_autoChan;
     LOGI(TAG, "Mikrofon käivitatud: PDM %d kHz (takt %d kHz), GPIO CLK=%d DATA=%d", MIC_RATE / 1000,
          MIC_RATE * 128 / 1000, MIC_SCK_PIN, MIC_SD_PIN);
     bool reported = false;
+    const uint32_t tStart = millis();
 
     while (s_run) {
         size_t got = 0;
         if (i2s_channel_read(s_rx, in, sizeof(in), &got, 200) != ESP_OK || !got) continue;
         const int frames = got / 4;
 
-        // Mõlema kanali tase; automaatrežiimis valitakse aktiivne (ehtne müra/heli)
-        statAdd(cst, in, frames);
+        // Mõlema kanali tase; aktiivne kanal valitakse automaatselt. Käivitusel
+        // (~300 ms) annab PDM filter mõlemas kanalis siirdeprotsessi → jäta vahele.
+        // Kanal vahetub ainult siis, kui teine on selgelt konstantne (kõrgtakistuslik pool).
+        if (millis() - tStart > 300) statAdd(cst, in, frames);
         if (cst[0].n >= MIC_RATE / 2) {
             s_chanDb[0] = statDb(cst[0]);
             s_chanDb[1] = statDb(cst[1]);
             cst[0] = ChStat(); cst[1] = ChStat();
-            if (s_chanDb[0] > -110 || s_chanDb[1] > -110) s_autoChan = s_chanDb[1] > s_chanDb[0] ? 1 : 0;
-            if (s_chanSetting == 2) s_chan = s_autoChan;
+            if (s_chanDb[0] <= -110 && s_chanDb[1] > -110) s_autoChan = 1;
+            else if (s_chanDb[1] <= -110 && s_chanDb[0] > -110) s_autoChan = 0;
+            s_chan = s_autoChan;
             if (!reported) {
                 reported = true;
                 LOGI(TAG, "Kanalid: vasak %.0f dBFS, parem %.0f dBFS → kasutan %s", s_chanDb[0], s_chanDb[1],
@@ -173,32 +178,53 @@ static void task(void *) {
     vTaskDelete(nullptr);
 }
 
-void apply() {
-    const Settings::Data d = Settings::get();
-    s_gain = powf(10.0f, d.micGain / 20.0f);
-    s_chanSetting = d.micChan;
-    if (s_task) s_chan = d.micChan == 2 ? s_autoChan : d.micChan;
-    if (d.micEnabled && s_task && !s_run) {    // peatumine veel pooleli – oota
+static void start() {
+    if (s_task && !s_run) {                    // peatumine veel pooleli – oota
         for (int i = 0; i < 50 && s_task; i++) vTaskDelay(pdMS_TO_TICKS(10));
     }
-    if (d.micEnabled && !s_task) {
-        if (!s_ring) s_ring = (int16_t *)heap_caps_calloc(RING, sizeof(int16_t), MALLOC_CAP_SPIRAM);
-        if (!s_ring) { LOGE(TAG, "Helipuhvrile ei jätkunud mälu"); return; }
-        s_run = true;
-        if (xTaskCreatePinnedToCore(task, "mic", 8192, nullptr, 5, &s_task, 0) != pdPASS) {
-            s_run = false;
-            s_task = nullptr;
-        }
-    } else if (!d.micEnabled && s_task) {
-        s_run = false;                         // task peatab I²S-i ja lõpetab ise
+    if (s_task) return;
+    if (!s_ring) s_ring = (int16_t *)heap_caps_calloc(RING, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!s_ring) { LOGE(TAG, "Helipuhvrile ei jätkunud mälu"); return; }
+    s_run = true;
+    if (xTaskCreatePinnedToCore(task, "mic", 8192, nullptr, 5, &s_task, 0) != pdPASS) {
+        s_run = false;
+        s_task = nullptr;
     }
+}
+
+// Aku säästmine: mikrofon töötab ainult siis, kui kaamera pilti vaadatakse
+// (veeb/RTSP) või keegi kuulab; muidu peatub MIC_IDLE_STOP_MS pärast.
+static void ctlTask(void *) {
+    uint32_t lastDemand = 0;
+    for (;;) {
+        bool en = Settings::get().micEnabled;
+        bool demand = en && (Camera::consumers() > 0 || s_listeners > 0);
+        uint32_t now = millis();
+        if (demand) {
+            lastDemand = now;
+            if (!s_task) start();
+        } else if (s_task && s_run && (!en || now - lastDemand > MIC_IDLE_STOP_MS)) {
+            LOGI(TAG, en ? "Vaatajaid pole – mikrofon peatub (aku säästmine)" : "Mikrofon lülitati välja");
+            s_run = false;                     // task peatab I²S-i ja lõpetab ise
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
+void apply() {
+    s_gain = powf(10.0f, Settings::get().micGain / 20.0f);
 }
 
 void begin() {
     apply();
+    xTaskCreatePinnedToCore(ctlTask, "mic_ctl", 4096, nullptr, 1, nullptr, 0);
     if (!Settings::get().micEnabled) LOGI(TAG, "Mikrofon on seadetes välja lülitatud");
 }
 
+bool enabled() { return Settings::get().micEnabled; }
+void addListener() { s_listeners++; }
+void removeListener() { if (s_listeners > 0) s_listeners--; }
+int listeners() { return s_listeners; }
 bool running() { return s_task != nullptr && s_run; }
 uint32_t position() { return s_wpos; }
 int channel() { return s_chan; }

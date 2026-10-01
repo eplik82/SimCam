@@ -45,6 +45,8 @@ static uint32_t  s_ts = 0;
 static volatile float    s_fps = 0;
 static std::atomic<int>  s_consumers{0};
 static volatile bool     s_refocusReq = false;
+static volatile uint32_t s_lastUse = 0;        // millis() viimasest kaadripäringust
+static volatile bool     s_sleeping = false;   // andur ooterežiimis (keegi ei vaata)
 static volatile uint8_t  s_afRaw = 0xFF;
 static const char       *s_sensor = "unknown";
 
@@ -177,8 +179,33 @@ static void captureTask(void *) {
     bool afPending = false;
     uint32_t fpsT0 = millis(), fpsN = 0;
 
+    uint32_t dropUntil = 0;                     // pärast ärkamist: vanad/kohanduvad kaadrid
+    s_lastUse = millis();
+
     for (;;) {
         uint32_t t0 = millis();
+
+        // --- Aku säästmine: keegi ei vaata → andur ooterežiimi, hõive seisab
+        bool wanted = s_consumers > 0 || t0 - s_lastUse < CAM_IDLE_SLEEP_MS;
+        if (!wanted && !s_sleeping) {
+            sensor_t *s = esp_camera_sensor_get();
+            if (s && s->id.PID == OV5640_PID) s->set_reg(s, 0x3008, 0x40, 0x40);   // tarkvaraline ooterežiim
+            s_sleeping = true;
+            s_fps = 0;
+            LOGI(TAG, "Vaatajaid pole – kaamera ooterežiimi (aku säästmine)");
+        }
+        if (s_sleeping) {
+            if (!wanted) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+            sensor_t *s = esp_camera_sensor_get();
+            if (s && s->id.PID == OV5640_PID) s->set_reg(s, 0x3008, 0x40, 0x00);   // ärata
+            s_sleeping = false;
+            dropUntil = millis() + CAM_WAKE_DROP_MS;
+            fpsT0 = millis(); fpsN = 0;
+#if CAM_AF_CONTINUOUS
+            if (s_afOk) afCommand(AF_CONTINUOUS);
+#endif
+            LOGI(TAG, "Kaamera ärkas (vaataja)");
+        }
 
         // --- AF käsud ja oleku lugemine (samast taskist → SCCB pole jagatud)
         if (s_afOk) {
@@ -219,6 +246,11 @@ static void captureTask(void *) {
             continue;
         }
         fails = 0;
+        if (dropUntil && (int32_t)(millis() - dropUntil) < 0) {   // ooterežiimi-eelsed / säri kohandub
+            esp_camera_fb_return(fb);
+            continue;
+        }
+        dropUntil = 0;
 
         const uint8_t *src = fb->buf;
         size_t srcLen = fb->len;
@@ -282,6 +314,11 @@ bool ready() { return s_ready; }
 bool waitFrame(Frame &dst, uint32_t lastSeq, uint32_t timeoutMs) {
     if (!s_ready) return false;
     uint32_t t0 = millis();
+    s_lastUse = t0;
+    if (s_sleeping) {                          // ärata ja oota värsket kaadrit (mitte enne und tehtut)
+        lastSeq = s_seq;
+        if (timeoutMs < CAM_WAKE_DROP_MS + 1500) timeoutMs = CAM_WAKE_DROP_MS + 1500;
+    }
     for (;;) {
         if (s_seq != 0 && s_seq != lastSeq) {
             bool ok = false;
@@ -462,5 +499,6 @@ size_t lastFrameBytes() { return s_len; }
 void addConsumer() { s_consumers++; }
 void removeConsumer() { s_consumers--; }
 int consumers() { return s_consumers; }
+bool sleeping() { return s_sleeping; }
 
 }  // namespace Camera

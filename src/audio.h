@@ -11,9 +11,13 @@
 
 namespace Audio {
 
-void begin();                 // käivitab, kui seadetes sees
-void apply();                 // seaded muutusid (sees/väljas, võimendus)
-bool running();
+void begin();                 // juhtimistask: mikrofon töötab ainult vaatajate/kuulajate ajal
+void apply();                 // seaded muutusid (võimendus)
+bool enabled();               // seadetes sees
+bool running();               // hetkel töötab (keegi vaatab või kuulab)
+void addListener();           // brauseri helivoog (/audio) – hoiab mikrofoni töös
+void removeListener();
+int  listeners();
 
 // Positsioon = kirjutatud 16 kHz diskreetide arv algusest
 uint32_t position();
@@ -26,11 +30,8 @@ uint32_t msAt(uint32_t pos);
 
 float levelDb();              // RMS viimase ~0,2 s jooksul, dBFS (-90…0)
 float peakDb();               // tipp viimase ~0,2 s jooksul, dBFS
-int   channel();              // kumba PDM kanalit kasutatakse (0 = vasak, 1 = parem)
-// Mõlema kanali signaalitase (dBFS, alalisvool eemaldatud, enne võimendust) –
-// mikrofon annab signaali ainult ühes kanalis; teine on hõljuv (juhuslik sahin
-// või konstant). Õige kanali leiab, kui rääkida ja vaadata, kumb tase muutub.
-float chanDb(int ch);
+int   channel();              // automaatselt valitud PDM kanal (0 = vasak, 1 = parem)
+float chanDb(int ch);         // kanalite tase (dBFS) – diagnostika
 const char *config();         // lugemisrežiim (nt "PDM 16 kHz")
 
 // Kodeerijad

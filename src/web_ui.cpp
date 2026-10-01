@@ -242,10 +242,10 @@ static String micJson() {
     char j[320];
     snprintf(j, sizeof(j),
         "\"mic\":{\"enabled\":%s,\"running\":%s,\"level\":%.1f,\"peak\":%.1f,\"gain\":%d,"
-        "\"codec\":%d,\"rtsp\":%s,\"listeners\":%d,\"chan\":%d,\"used_chan\":%d,\"l_db\":%.0f,\"r_db\":%.0f,\"i2s\":\"%s\"}",
+        "\"codec\":%d,\"rtsp\":%s,\"listeners\":%d,\"used_chan\":%d,\"l_db\":%.0f,\"r_db\":%.0f,\"i2s\":\"%s\",\"cam_sleep\":%s}",
         d.micEnabled ? "true" : "false", Audio::running() ? "true" : "false", Audio::levelDb(),
         Audio::peakDb(), d.micGain, d.micCodec, d.rtspAudio ? "true" : "false", (int)s_audioStreams,
-        d.micChan, Audio::channel(), Audio::chanDb(0), Audio::chanDb(1), Audio::config());
+        Audio::channel(), Audio::chanDb(0), Audio::chanDb(1), Audio::config(), Camera::sleeping() ? "true" : "false");
     return String(j);
 }
 
@@ -580,14 +580,14 @@ static esp_err_t h_config_get(httpd_req_t *req) {
         "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
         "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s,"
-        "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"mic_chan\":%d,\"rtsp_audio\":%s,"
+        "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"rtsp_audio\":%s,"
         "\"framesize\":%d,\"framesizes\":%s}",
         d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
         d.lteEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
         strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false",
         d.autoUpdate ? "true" : "false",
-        d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.micChan, d.rtspAudio ? "true" : "false",
+        d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.rtspAudio ? "true" : "false",
         Camera::framesize(), Camera::framesizesJson().c_str());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -631,7 +631,6 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "mic_en", v, sizeof(v))) d.micEnabled = v[0] == '1';
     if (formField(body, "mic_gain", v, sizeof(v))) d.micGain = constrain(atoi(v), 0, 40);
     if (formField(body, "mic_codec", v, sizeof(v))) d.micCodec = v[0] == '1' ? 1 : 0;
-    if (formField(body, "mic_chan", v, sizeof(v))) d.micChan = constrain(atoi(v), 0, 2);
     if (formField(body, "rtsp_audio", v, sizeof(v))) d.rtspAudio = v[0] == '1';
     bool autoOn = false;
     if (formField(body, "auto_update", v, sizeof(v))) { autoOn = v[0] == '1' && !d.autoUpdate; d.autoUpdate = v[0] == '1'; }
@@ -650,7 +649,7 @@ static esp_err_t h_config_post(httpd_req_t *req) {
              reboot ? "true" : "false", apForced ? "true" : "false");
     httpd_resp_sendstr(req, resp);
     LOGI(TAG, "Seaded muudetud veebiliidesest%s", reboot ? " (LTE muutus → vajab taaskäivitust)" : "");
-    if (before.micEnabled != d.micEnabled || before.micGain != d.micGain || before.micChan != d.micChan)
+    if (before.micEnabled != d.micEnabled || before.micGain != d.micGain)
         Audio::apply();
     // WiFi taaskäivitus ainult siis, kui WiFi/hotspoti seaded tegelikult muutusid
     // (muidu katkeks nt RTSP ja käimasolev uuenduste kontroll asjatult).
@@ -763,7 +762,8 @@ static void audioTask(void *arg) {
     uint32_t idle = millis();
     for (;pcm && out;) {
         if (!Audio::running()) {
-            if (millis() - idle > 3000) break;                // mikrofon lülitati välja
+            // Mikrofon käivitub kuulaja peale (aku säästmise ootelolekust) – anna aega
+            if (!Audio::enabled() || millis() - idle > 3000) break;
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -779,13 +779,14 @@ static void audioTask(void *arg) {
     httpd_resp_send_chunk(req, nullptr, 0);
     httpd_req_async_handler_complete(req);
     s_audioStreams--;
+    Audio::removeListener();
     LOGI(TAG, "Brauseri helivoog lõppes (pinu vaba min %u B)", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     vTaskDelete(nullptr);
 }
 
 static esp_err_t h_audio(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
-    if (!Audio::running()) {
+    if (!Audio::enabled()) {
         httpd_resp_set_status(req, "409 Conflict");
         return httpd_resp_sendstr(req, "Mikrofon on välja lülitatud");
     }
@@ -796,8 +797,10 @@ static esp_err_t h_audio(httpd_req_t *req) {
     httpd_req_t *copy = nullptr;
     if (httpd_req_async_handler_begin(req, &copy) != ESP_OK) return ESP_FAIL;
     s_audioStreams++;
+    Audio::addListener();
     if (xTaskCreatePinnedToCore(audioTask, "audio_http", 6144, copy, 4, nullptr, 1) != pdPASS) {
         s_audioStreams--;
+        Audio::removeListener();
         httpd_req_async_handler_complete(copy);
         return ESP_FAIL;
     }

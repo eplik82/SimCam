@@ -390,7 +390,7 @@ static bool handleRequest(Session &s, char *req) {
         char ip[16];
         inet_ntoa_r(me.sin_addr, ip, sizeof(ip));
         const Settings::Data cfg = Settings::get();
-        s.audio = Audio::running() && cfg.rtspAudio;
+        s.audio = Audio::enabled() && cfg.rtspAudio;   // mikrofon käivitub PLAY-ga koos kaameraga
         s.aCodec = cfg.micCodec ? 1 : 0;
         char sdp[640];
         int sl = snprintf(sdp, sizeof(sdp),

@@ -54,6 +54,19 @@ body{display:flex;flex-direction:column;color:#fff}
 .bar .rot button{border:0;border-radius:0;min-width:48px;padding:10px 10px;border-right:1px solid #2a303b}
 .bar .rot button:last-child{border-right:0}
 @media (max-width:420px){.bar .lbl{display:none}.bar button{font-size:18px;padding:10px 11px}.bar .rot button{font-size:14px;min-width:42px}}
+/* Telefon horisontaalis: pilt üle kogu ekraani, info ja nupud pildi peal */
+@media (orientation:landscape) and (max-height:600px){
+ .stage{position:fixed;inset:0}
+ .stage img{width:100%;height:100%}
+ .info{position:fixed;top:calc(8px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left));z-index:2;background:rgba(0,0,0,.5);border:0;border-radius:8px;min-height:0;padding:4px 10px;font-size:12px}
+ .bar{position:fixed;left:0;right:0;bottom:0;z-index:2;background:linear-gradient(transparent,rgba(0,0,0,.65));border:0;padding:16px calc(10px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left))}
+ .bar button,.bar .rot{background:rgba(27,32,41,.72);border-color:rgba(255,255,255,.15)}
+ .bar .rot button{background:transparent}
+ .bar button.on,.bar .rot button.on{background:var(--acc);border-color:var(--acc)}
+ .bar .lbl{display:none}
+ .gear{top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));z-index:3}
+ .toast{bottom:76px}
+}
 </style></head><body>
 <div class="stage">
   <img id="view" alt="">
@@ -108,6 +121,11 @@ SimAudio.onstate=on=>{const b=$('bAudio');b.classList.toggle('on',on);b.firstChi
 SimAudio.onerror=m=>toast('Heli: '+m);
 $('bAudio').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
 api('/api/cam').then(r=>r.json()).then(c=>{rot=c.rotate||0;showRot()}).catch(()=>{});
+// Horisontaalis täisekraan (brauser lubab seda ainult pärast puudutust → proovi ka esimesel puudutusel)
+const land=matchMedia('(orientation:landscape) and (max-height:600px)'),de=document.documentElement;
+function fsOn(){if(land.matches&&!document.fullscreenElement&&de.requestFullscreen)de.requestFullscreen({navigationUI:'hide'}).catch(()=>{})}
+land.addEventListener('change',()=>{if(land.matches)fsOn();else if(document.fullscreenElement)document.exitFullscreen().catch(()=>{})});
+document.addEventListener('click',fsOn);
 setPlay(true);stats();
 </script></body></html>)HTML";
 
@@ -309,13 +327,10 @@ details form{margin-top:8px}
     <input type="range" id="f_mic_gain" min="0" max="40" step="2" value="24" aria-label="Võimendus">
     <label style="margin-top:8px">Helikvaliteet
      <select class="sel" id="f_mic_codec"><option value="0">G.711 8 kHz, 64 kbit/s (soovitatav)</option><option value="1">L16 16 kHz, 256 kbit/s (selgem)</option></select></label>
-    <label style="margin-top:8px">Mikrofoni kanal
-     <select class="sel" id="f_mic_chan"><option value="2">Automaatne (soovitatav)</option><option value="0">Vasak</option><option value="1">Parem</option></select></label>
-    <div class="note" id="m_chan_t">-</div>
     <label class="chk" style="margin-top:8px"><input type="checkbox" id="f_rtsp_audio"> Heli RTSP voos</label>
     <div class="btns" style="margin-top:8px"><button type="button" id="bListen">🔈 Kuula</button><button class="pri" type="submit">Salvesta</button></div>
    </div>
-   <div class="note">Mikrofon on vaikimisi väljas. Heli salvestamisel arvesta teiste inimeste privaatsusega. Kodeki muutus rakendub uutele RTSP ühendustele.</div>
+   <div class="note">Mikrofon on vaikimisi väljas. Aku säästmiseks töötavad kaamera ja mikrofon ainult siis, kui pilti vaadatakse (või „Kuula" ajal). Heli salvestamisel arvesta teiste inimeste privaatsusega. Kodeki muutus rakendub uutele RTSP ühendustele.</div>
   </form>
  </section>
 
@@ -350,7 +365,7 @@ async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-s
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
  if(c.framesizes){const sel=$('f_fs');sel.innerHTML=c.framesizes.map(f=>`<option value="${f.v}">${f.name} – ${f.w}×${f.h}${f.v==c.framesize?' (praegu)':''}</option>`).join('');sel.value=c.framesize}
  $('f_mic_en').checked=c.mic_en;$('f_mic_gain').value=c.mic_gain;$('m_gain_t').textContent=c.mic_gain+' dB';
- $('f_mic_codec').value=c.mic_codec;$('f_mic_chan').value=c.mic_chan;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
+ $('f_mic_codec').value=c.mic_codec;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
  $('defpass').style.display=c.default_pass?'block':'none'}catch(e){}}
 function showRtsp(){$('rtsp').textContent=rtspAuth?`rtsp://admin:<parool>@${location.hostname}:554/live`:`rtsp://${location.hostname}:554/live`}
 $('bCopy').onclick=()=>{const t=$('rtsp').textContent;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Kopeeritud'),()=>toast(t))};
@@ -392,13 +407,12 @@ $('f_mic_gain').oninput=()=>$('m_gain_t').textContent=$('f_mic_gain').value+' dB
 $('f_mic_en').onchange=()=>{const on=$('f_mic_en').checked;$('micOn').style.display=on?'':'none';if(!on)SimAudio.stop();
  save({mic_en:on?1:0},on?'Mikrofon sees':'Mikrofon väljas')};
 $('fMic').onsubmit=e=>{e.preventDefault();SimAudio.stop();
- save({mic_gain:$('f_mic_gain').value,mic_codec:$('f_mic_codec').value,mic_chan:$('f_mic_chan').value,rtsp_audio:$('f_rtsp_audio').checked?1:0},'Mikrofoni seaded salvestatud')};
+ save({mic_gain:$('f_mic_gain').value,mic_codec:$('f_mic_codec').value,rtsp_audio:$('f_rtsp_audio').checked?1:0},'Mikrofoni seaded salvestatud')};
 SimAudio.onstate=on=>{$('bListen').textContent=on?'⏹ Lõpeta':'🔈 Kuula'};SimAudio.onerror=m=>toast('Heli: '+m);
 $('bListen').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
 function showMic(m){if(!m)return;const pct=m.running?Math.max(0,Math.min(100,(m.level+70)/70*100)):0;
  $('m_lvl_b').style.width=pct+'%';$('m_lvl').classList.toggle('hot',m.peak>-3);
- $('m_chan_t').textContent=m.running?`${m.i2s}, kasutusel ${m.used_chan?'parem':'vasak'} kanal. Signaal: vasak ${m.l_db} dBFS, parem ${m.r_db} dBFS (vaikses ruumis peaks mikrofoni kanal olema ~−60…−80 ja teine ~−120).`:'';
- $('m_lvl_t').textContent=m.running?`${m.level.toFixed(0)} dBFS (tipp ${m.peak.toFixed(0)})`:(m.enabled?'käivitub…':'-')}
+ $('m_lvl_t').textContent=m.running?`${m.level.toFixed(0)} dBFS (tipp ${m.peak.toFixed(0)})`:(m.enabled?'ootel – töötab ainult pildi vaatamise või kuulamise ajal':'-')}
 $('bReboot').onclick=async()=>{if(!confirm('Kas taaskäivitada seade?'))return;try{await api('/api/reboot',{method:'POST'})}catch(e){}toast('Taaskäivitan…')};
 const OST={idle:'-',checking:'Kontrollin…',uptodate:'Ajakohane ✓',available:'Uuendus saadaval!',updating:'Uuendan…',done:'Paigaldatud – taaskäivitub',error:'Viga'};
 async function otaPoll(){try{const o=await (await api('/api/ota',{cache:'no-store'})).json();
