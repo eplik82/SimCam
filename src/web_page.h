@@ -309,6 +309,9 @@ details form{margin-top:8px}
     <input type="range" id="f_mic_gain" min="0" max="40" step="2" value="24" aria-label="Võimendus">
     <label style="margin-top:8px">Helikvaliteet
      <select class="sel" id="f_mic_codec"><option value="0">G.711 8 kHz, 64 kbit/s (soovitatav)</option><option value="1">L16 16 kHz, 256 kbit/s (selgem)</option></select></label>
+    <label style="margin-top:8px">Mikrofoni kanal
+     <select class="sel" id="f_mic_chan"><option value="0">Vasak (vaikimisi)</option><option value="1">Parem</option></select></label>
+    <div class="note" id="m_chan_t">-</div>
     <label class="chk" style="margin-top:8px"><input type="checkbox" id="f_rtsp_audio"> Heli RTSP voos</label>
     <div class="btns" style="margin-top:8px"><button type="button" id="bListen">🔈 Kuula</button><button class="pri" type="submit">Salvesta</button></div>
    </div>
@@ -347,7 +350,7 @@ async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-s
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
  if(c.framesizes){const sel=$('f_fs');sel.innerHTML=c.framesizes.map(f=>`<option value="${f.v}">${f.name} – ${f.w}×${f.h}${f.v==c.framesize?' (praegu)':''}</option>`).join('');sel.value=c.framesize}
  $('f_mic_en').checked=c.mic_en;$('f_mic_gain').value=c.mic_gain;$('m_gain_t').textContent=c.mic_gain+' dB';
- $('f_mic_codec').value=c.mic_codec;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
+ $('f_mic_codec').value=c.mic_codec;$('f_mic_chan').value=c.mic_chan;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
  $('defpass').style.display=c.default_pass?'block':'none'}catch(e){}}
 function showRtsp(){$('rtsp').textContent=rtspAuth?`rtsp://admin:<parool>@${location.hostname}:554/live`:`rtsp://${location.hostname}:554/live`}
 $('bCopy').onclick=()=>{const t=$('rtsp').textContent;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Kopeeritud'),()=>toast(t))};
@@ -389,11 +392,12 @@ $('f_mic_gain').oninput=()=>$('m_gain_t').textContent=$('f_mic_gain').value+' dB
 $('f_mic_en').onchange=()=>{const on=$('f_mic_en').checked;$('micOn').style.display=on?'':'none';if(!on)SimAudio.stop();
  save({mic_en:on?1:0},on?'Mikrofon sees':'Mikrofon väljas')};
 $('fMic').onsubmit=e=>{e.preventDefault();SimAudio.stop();
- save({mic_gain:$('f_mic_gain').value,mic_codec:$('f_mic_codec').value,rtsp_audio:$('f_rtsp_audio').checked?1:0},'Mikrofoni seaded salvestatud')};
+ save({mic_gain:$('f_mic_gain').value,mic_codec:$('f_mic_codec').value,mic_chan:$('f_mic_chan').value,rtsp_audio:$('f_rtsp_audio').checked?1:0},'Mikrofoni seaded salvestatud')};
 SimAudio.onstate=on=>{$('bListen').textContent=on?'⏹ Lõpeta':'🔈 Kuula'};SimAudio.onerror=m=>toast('Heli: '+m);
 $('bListen').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
 function showMic(m){if(!m)return;const pct=m.running?Math.max(0,Math.min(100,(m.level+70)/70*100)):0;
  $('m_lvl_b').style.width=pct+'%';$('m_lvl').classList.toggle('hot',m.peak>-3);
+ $('m_chan_t').textContent=m.running?`Signaal: vasak ${m.l_db} dBFS, parem ${m.r_db} dBFS. Räägi mikrofoni lähedal – õige on kanal, mille tase muutub.`:'';
  $('m_lvl_t').textContent=m.running?`${m.level.toFixed(0)} dBFS (tipp ${m.peak.toFixed(0)})`:(m.enabled?'käivitub…':'-')}
 $('bReboot').onclick=async()=>{if(!confirm('Kas taaskäivitada seade?'))return;try{await api('/api/reboot',{method:'POST'})}catch(e){}toast('Taaskäivitan…')};
 const OST={idle:'-',checking:'Kontrollin…',uptodate:'Ajakohane ✓',available:'Uuendus saadaval!',updating:'Uuendan…',done:'Paigaldatud – taaskäivitub',error:'Viga'};

@@ -34,7 +34,8 @@ static volatile uint32_t s_frameMs;        // millis() viimase kaadri lõpus
 static volatile uint32_t s_framePos;       // s_wpos samal hetkel
 static volatile float    s_gain = 1.0f;    // lineaarne
 static volatile float    s_level = -90, s_peak = -90;
-static volatile int      s_chan = 0;       // 0 = vasak, 1 = parem
+static volatile int      s_chan = 0;       // 0 = vasak, 1 = parem (seadetest)
+static volatile float    s_chanDb[2] = {-120, -120};
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -74,8 +75,10 @@ static void task(void *) {
     int32_t *in = (int32_t *)heap_caps_malloc(FRAME_IN * 2 * sizeof(int32_t), MALLOC_CAP_INTERNAL);
     int16_t out[FRAME_OUT];
     float dcX = 0, dcY = 0;                    // alalisvoolu eemaldus (HPF ~20 Hz)
-    double eL = 0, eR = 0;                     // kanalite energia (automaatne valik)
-    int detectFrames = 0;
+    // Kanalite diagnostika: 24-bit toorväärtuste dispersioon ~0,5 s aknas
+    double cs[2] = {0, 0}, cq[2] = {0, 0};
+    int cn = 0;
+    bool reported = false;
     double winSq = 0; int winN = 0; int winPeak = 0;
 
     if (!in || !startI2s()) {
@@ -93,18 +96,26 @@ static void task(void *) {
         if (i2s_channel_read(s_rx, in, FRAME_IN * 2 * sizeof(int32_t), &got, 200) != ESP_OK || !got) continue;
         const int frames = got / (2 * sizeof(int32_t));
 
-        // Esimese ~1 s jooksul vali kanal, kus on signaal (L/R viik määrab)
-        if (detectFrames < 50) {
-            for (int i = 0; i < frames; i++) {
-                float l = in[2 * i] >> 8, r = in[2 * i + 1] >> 8;
-                eL += l * l; eR += r * r;
+        // Mõlema kanali tase (dispersioon → dBFS 24-bit skaalal)
+        for (int i = 0; i < frames; i++)
+            for (int c = 0; c < 2; c++) {
+                double v = in[2 * i + c] >> 8;
+                cs[c] += v; cq[c] += v * v;
             }
-            if (++detectFrames == 50) {
-                s_chan = eR > eL * 4 ? 1 : 0;
-                if (eL < 1e3 && eR < 1e3)
-                    LOGW(TAG, "Mikrofon ei anna signaali (kontrolli plaadi versiooni / mikrofoni)");
-                else
-                    LOGI(TAG, "Mikrofoni kanal: %s", s_chan ? "parem" : "vasak");
+        cn += frames;
+        if (cn >= I2S_RATE / 2) {
+            for (int c = 0; c < 2; c++) {
+                double m = cs[c] / cn, var = cq[c] / cn - m * m;
+                s_chanDb[c] = var > 1 ? 10 * log10(var) - 20 * log10(8388608.0) : -120;
+                cs[c] = cq[c] = 0;
+            }
+            cn = 0;
+            if (!reported) {
+                reported = true;
+                LOGI(TAG, "Kanalite tase: vasak %.0f dBFS, parem %.0f dBFS – kasutan %s kanalit",
+                     s_chanDb[0], s_chanDb[1], s_chan ? "paremat" : "vasakut");
+                if (s_chanDb[s_chan] < -110)
+                    LOGW(TAG, "Valitud kanalis pole signaali – proovi seadetes teist kanalit");
             }
         }
 
@@ -143,6 +154,8 @@ static void task(void *) {
     free(in);
     s_level = -90;
     s_peak = -90;
+    s_chanDb[0] = -120;
+    s_chanDb[1] = -120;
     LOGI(TAG, "Mikrofon peatatud");
     s_task = nullptr;
     vTaskDelete(nullptr);
@@ -151,6 +164,7 @@ static void task(void *) {
 void apply() {
     const Settings::Data d = Settings::get();
     s_gain = powf(10.0f, d.micGain / 20.0f);
+    s_chan = d.micChan;
     if (d.micEnabled && s_task && !s_run) {    // peatumine veel pooleli – oota
         for (int i = 0; i < 50 && s_task; i++) vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -175,6 +189,7 @@ void begin() {
 bool running() { return s_task != nullptr && s_run; }
 uint32_t position() { return s_wpos; }
 int channel() { return s_chan; }
+float chanDb(int ch) { return s_chanDb[ch & 1]; }
 float levelDb() { return s_level; }
 float peakDb() { return s_peak; }
 

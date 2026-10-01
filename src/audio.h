@@ -27,6 +27,10 @@ uint32_t msAt(uint32_t pos);
 float levelDb();              // RMS viimase ~0,2 s jooksul, dBFS (-90…0)
 float peakDb();               // tipp viimase ~0,2 s jooksul, dBFS
 int   channel();              // kumba I²S kanalit kasutatakse (0 = vasak, 1 = parem)
+// Mõlema kanali signaalitase (dBFS, alalisvool eemaldatud, enne võimendust) –
+// mikrofon annab signaali ainult ühes kanalis; teine on hõljuv (juhuslik sahin
+// või konstant). Õige kanali leiab, kui rääkida ja vaadata, kumb tase muutub.
+float chanDb(int ch);
 
 // Kodeerijad
 uint8_t mulaw(int16_t s);                                     // G.711 µ-law
