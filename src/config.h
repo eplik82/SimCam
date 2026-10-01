@@ -137,6 +137,7 @@
 #define AF_POS_DEFAULT       512         // käsitsi fookus 0 (lõpmatus) … 1023 (lähedal)
 // Pildi pööre (vaikimisi; muudetav veebiliidesest): 0 või 180 (teeb sensor ise)
 #define CAM_ROTATION_DEFAULT 0
+#define CAM_MIRROR_DEFAULT   1           // T-SIMCAM OV5640 annab muidu peegelpildi (tekst tagurpidi)
 
 // -----------------------------------------------------------------------------
 //  Serverid

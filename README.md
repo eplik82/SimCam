@@ -207,6 +207,10 @@ Diagnostika: `/api/cam?reg=0x3029` (AF olek), `/api/cam?wreg=<reg>&val=<v>` (kir
 
 ## Pööramine ja kaamera juhtimine
 
+**Peegeldus (v1.9.2):** T-SIMCAM OV5640 annab ilma parandita peegelpildi (tekst tagurpidi),
+seepärast on sensori `hmirror` vaikimisi sees. ⚙ → **📷 Pilt → „Peegelda pilt"** lülitab
+selle; valik salvestatakse NVS-i ja kehtib ka RTSP-s ja 180° pöörde korral.
+
 **Resolutsioon:** ⚙ → **📷 Pilt** → QVGA 320×240, VGA 640×480, **SVGA 800×600**
 (vaikimisi), XGA 1024×768, HD 1280×720, SXGA 1280×1024, UXGA 1600×1200 või
 Full HD 1920×1080 (OV2640 puhul kuni UXGA). Valik rakendub kohe ja salvestub.

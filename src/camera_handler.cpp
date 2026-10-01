@@ -352,6 +352,7 @@ bool begin() {
     {
         int r = Settings::get().rotation;   // 0 või 180 (vana 90°/270° teisendab Settings::load)
         s_rotation = r;
+        s_userHmirror = Settings::get().mirror;
         applySensorFlip();
         if (r) LOGI(TAG, "Pildi pööre %d°", r);
     }
@@ -442,7 +443,15 @@ bool control(const char *var, int val) {
     else if (!strcmp(var, "awb"))        r = s->set_whitebal(s, val);
     else if (!strcmp(var, "awb_gain"))   r = s->set_awb_gain(s, val);
     else if (!strcmp(var, "wb_mode"))    r = s->set_wb_mode(s, val);
-    else if (!strcmp(var, "hmirror"))    { s_userHmirror = val; applySensorFlip(); r = 0; }
+    else if (!strcmp(var, "hmirror")) {
+        s_userHmirror = val != 0;
+        applySensorFlip();
+        Settings::Data d = Settings::get();
+        d.mirror = s_userHmirror;
+        Settings::save(d);
+        LOGI(TAG, "Peegeldus %s", s_userHmirror ? "sees" : "väljas");
+        r = 0;
+    }
     else if (!strcmp(var, "vflip"))      { s_userVflip = val; applySensorFlip(); r = 0; }
     else if (!strcmp(var, "rotate"))     return setRotation(val);
     else if (!strcmp(var, "special_effect")) r = s->set_special_effect(s, val);

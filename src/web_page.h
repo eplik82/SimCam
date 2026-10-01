@@ -256,6 +256,8 @@ details form{margin-top:8px}
    <div class="note" id="fsNote">Suurem resolutsioon = detailsem pilt, kuid väiksem kaadrisagedus ja suurem andmemaht. Mobiilivõrgus (LTE) soovitame SVGA 800×600 või väiksemat.</div>
    <div class="btns"><button class="pri" type="submit">Rakenda</button></div>
   </form>
+  <label class="chk" style="margin-top:12px"><input type="checkbox" id="f_mirror"> Peegelda pilt (vasak ↔ parem)</label>
+  <div class="note">Kui tekst on pildil tagurpidi, muuda seda. Rakendub kohe, ka RTSP-s.</div>
   <div id="afBox" style="display:none;margin-top:14px">
    <hr>
    <label style="margin-top:10px">Fookus
@@ -418,11 +420,13 @@ $('fSim').onsubmit=async e=>{e.preventDefault();const o=$('s_old').value.trim(),
 const AFS={focused:'fookuses ✓',focusing:'fokusseerin…',manual:'käsitsi',idle:'ootel',busy:'töötab','n/a':'puudub'};
 let afDrag=false,afT=0;
 async function afLoad(){try{const c=await (await api('/api/cam',{cache:'no-store'})).json();
+ if(document.activeElement!==$('f_mirror'))$('f_mirror').checked=!!c.hmirror;
  $('afBox').style.display=c.af?'':'none';if(!c.af)return;
  if(document.activeElement!==$('f_af_mode'))$('f_af_mode').value=c.af_mode;$('afMan').style.display=c.af_mode==2?'':'none';
  if(!afDrag){$('f_af_pos').value=c.af_pos}
  $('af_pos_t').textContent=$('f_af_pos').value;
  $('af_st').textContent=(AFS[c.af_state]||c.af_state)+(c.lens>=0?` · lääts ${c.lens}`:'')}catch(e){}}
+$('f_mirror').onchange=async e=>{const r=await api('/api/cam?var=hmirror&val='+(e.target.checked?1:0));toast(r.ok?(e.target.checked?'Peegeldus sees':'Peegeldus väljas'):'Ebaõnnestus')};
 $('f_af_mode').onchange=async e=>{await api('/api/cam?var=af_mode&val='+e.target.value);toast('Fookuse režiim muudetud');setTimeout(afLoad,300)};
 $('f_af_pos').oninput=e=>{afDrag=true;$('af_pos_t').textContent=e.target.value;const n=Date.now();if(n-afT>150){afT=n;api('/api/cam?var=af_pos_live&val='+e.target.value).catch(()=>{})}};
 $('f_af_pos').onchange=async e=>{afDrag=false;await api('/api/cam?var=af_pos&val='+e.target.value);afLoad()};
