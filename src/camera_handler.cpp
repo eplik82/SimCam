@@ -346,7 +346,23 @@ bool begin() {
         return false;
     }
     s_mtx = xSemaphoreCreateMutex();
-    if (!initSensor()) return false;
+    // Plaadil pole kaamera reset-viiku: tarkvaralise taaskäivituse järel võib sensor
+    // jääda eelmisesse olekusse (nt ooterežiim) ja SCCB probe ebaõnnestub
+    // ("Detected camera not supported"). Siis lülita V3V (PWR_EN, GPIO1) korraks
+    // välja ja proovi uuesti – toitekatkestus lähtestab sensori.
+    bool ok = false;
+    for (int attempt = 1; attempt <= 3 && !ok; attempt++) {
+        ok = initSensor();
+        if (ok) break;
+        LOGW(TAG, "Kaamera ei vastanud (katse %d/3) – lülitan kaamera toite korraks välja", attempt);
+        esp_camera_deinit();
+        pinMode(BOARD_PWR_ON_PIN, OUTPUT);
+        digitalWrite(BOARD_PWR_ON_PIN, LOW);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        digitalWrite(BOARD_PWR_ON_PIN, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    if (!ok) return false;
     initAutofocus();
     s_ready = true;
     {
@@ -364,7 +380,12 @@ bool begin() {
 bool ready() { return s_ready; }
 
 bool waitFrame(Frame &dst, uint32_t lastSeq, uint32_t timeoutMs) {
-    if (!s_ready) return false;
+    if (!s_ready) {
+        // Kaamera puudub/ebaõnnestus: oota siiski, muidu keerlevad kutsujad (MJPEG voog)
+        // pausita tsüklis ja ummistavad protsessorituuma (v1.10.0: seade jäi kinni)
+        vTaskDelay(pdMS_TO_TICKS(timeoutMs > 20 ? timeoutMs : 20));
+        return false;
+    }
     uint32_t t0 = millis();
     s_lastUse = t0;
     if (s_sleeping) {                          // ärata ja oota värsket kaadrit (mitte enne und tehtut)

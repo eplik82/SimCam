@@ -312,7 +312,11 @@ void begin() {
     }
     LOGI(TAG, "Püsivara %s, partitsioon %s, uuenduste allikas github.com/%s",
          SIMCAM_VERSION, run ? run->label : "?", SIMCAM_GITHUB_REPO);
-    xTaskCreatePinnedToCore(otaTask, "ota", 10240, nullptr, 2, &s_task, 0);
+    // Core 1, madalaim prioriteet: HTTPS (TLS sertifikaadi ECDSA kontroll) on sekundeid
+    // kestev arvutus. Core 0-l koos mikrofoni, WiFi ja koormusega (push + voog) venis see
+    // üle 5 s → IDLE0 ei saanud joosta → taski watchdog taaskäivitas seadme (v1.10.0).
+    // Core 1 IDLE-t watchdog ei jälgi; prioriteet 1 ei sega voogusid (2–3).
+    xTaskCreatePinnedToCore(otaTask, "ota", 10240, nullptr, 1, &s_task, 1);
 }
 
 void checkNow(uint32_t delayMs) {

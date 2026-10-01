@@ -47,9 +47,13 @@ void setup() {
     LOGI(TAG, "==============================================");
 
     // Plaadi perifeeria toide (kaamera, mPCIe) – LilyGO T-SIMCAM PWR_ON
+    // Toite lähtestus: tarkvaralise taaskäivituse järel on V3V juba sees ja kaamera
+    // sensor eelmises olekus – lühike toitekatkestus annab puhta käivituse.
     pinMode(BOARD_PWR_ON_PIN, OUTPUT);
+    digitalWrite(BOARD_PWR_ON_PIN, LOW);
+    delay(300);
     digitalWrite(BOARD_PWR_ON_PIN, HIGH);
-    delay(200);
+    delay(300);
 
     Settings::load();                 // NVS seaded (WiFi, LTE, pildi pööre)
     Battery::begin();                 // aku pinge (GPIO3) ja olek

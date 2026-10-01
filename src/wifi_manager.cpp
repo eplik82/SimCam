@@ -89,10 +89,13 @@ static void dnsTask(void *) {
     }
 }
 
+static volatile uint32_t s_staDownSince = 0;   // millis() WiFi kliendi katkestusest (0 = ühendatud)
+
 static void onEvent(arduino_event_id_t ev, arduino_event_info_t info) {
     switch (ev) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             s_staUp = true;
+            s_staDownSince = 0;
             LOGI(TAG, "WiFi ühendatud: %s  IP %s  (%d dBm)  →  http://%s/  rtsp://%s:%d%s",
                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI(),
                  WiFi.localIP().toString().c_str(), WiFi.localIP().toString().c_str(),
@@ -101,6 +104,7 @@ static void onEvent(arduino_event_id_t ev, arduino_event_info_t info) {
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
             if (s_staUp) LOGW(TAG, "WiFi ühendus katkes (põhjus %d), taasühendun...",
                               info.wifi_sta_disconnected.reason);
+            if (s_staUp || !s_staDownSince) s_staDownSince = millis();
             s_staUp = false;
             break;
         case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
@@ -168,6 +172,7 @@ static void apply() {
         WiFi.softAPdisconnect(false);
     }
     s_staUp = false;
+    s_staDownSince = millis();
     s_dnsOn = false;
     s_apTemp = false;
     WiFi.mode(mode);
@@ -231,6 +236,24 @@ void loop() {
     lastTick = now;
 
     Settings::Data d = Settings::get();
+
+    // Taasühendamise valvur: Arduino-ESP32 3.x autoReconnect ühendub uuesti ainult osade
+    // katkestuse põhjuste korral (nt BEACON_TIMEOUT), mitte nt ASSOC_LEAVE (8) puhul –
+    // siis jäi seade WiFi-st lõplikult välja (v1.10.0). Ühenda ise uuesti, 10 s … 60 s vahega.
+    static uint32_t lastRetry = 0, retryGap = 10000;
+    if (d.staEnabled && !s_staUp && s_staDownSince) {
+        if (now - s_staDownSince > 10000 && now - lastRetry > retryGap) {
+            lastRetry = now;
+            LOGW(TAG, "WiFi '%s' pole %lu s ühendatud – alustan ühendust uuesti", d.staSsid,
+                 (unsigned long)((now - s_staDownSince) / 1000));
+            WiFi.disconnect(false, false);
+            WiFi.begin(d.staSsid, d.staPass);
+            retryGap = retryGap < 60000 ? retryGap * 2 : 60000;
+        }
+    } else {
+        retryGap = 10000;
+    }
+
     if (d.apEnabled) { offlineSince = onlineSince = 0; return; }   // hotspot on niigi sees
 
     bool online = (s_staUp && WiFi.isConnected()) || LTE::connected();

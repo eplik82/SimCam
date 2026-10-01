@@ -789,7 +789,10 @@ static void streamTask(void *arg) {
     httpd_resp_set_hdr(req, "X-Framerate", "15");
 
     for (;;) {
-        if (!Camera::waitFrame(fr, lastSeq, 5000)) continue;   // kaamera ootel
+        if (!Camera::waitFrame(fr, lastSeq, 5000)) {           // kaamera ootel/puudub
+            vTaskDelay(pdMS_TO_TICKS(50));                     // igaks juhuks: ära keerle pausita
+            continue;
+        }
         lastSeq = fr.seq;
         int n = snprintf(part, sizeof(part), STREAM_PART, (unsigned)fr.len);
         if (httpd_resp_send_chunk(req, STREAM_SEP, strlen(STREAM_SEP)) != ESP_OK) break;
