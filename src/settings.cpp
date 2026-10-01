@@ -62,6 +62,8 @@ void load() {
         if (p.isKey("ap_pass")) p.getString("ap_pass", d.apPass, sizeof(d.apPass));
         d.lteEnabled = p.getBool("lte_en", d.lteEnabled);
         d.rotation = p.getShort("rot", d.rotation);
+        // 90°/270° eemaldati v1.8.0-s: 270° → 180°, muu → 0° (muidu ei läbiks save() kontrolli)
+        if (d.rotation != 0 && d.rotation != 180) d.rotation = d.rotation == 270 ? 180 : 0;
         if (p.isKey("sim_pin")) p.getString("sim_pin", d.simPin, sizeof(d.simPin));
         if (p.isKey("apn")) p.getString("apn", d.apn, sizeof(d.apn));
         if (p.isKey("web_pass")) p.getString("web_pass", d.webPass, sizeof(d.webPass));
@@ -107,7 +109,7 @@ bool save(const Data &din) {
     // WPA2 parool peab olema 8–63 märki (või tühi = avatud võrk kliendi puhul)
     if (d.apEnabled && (strlen(d.apSsid) == 0 || strlen(d.apPass) < 8)) return false;
     if (d.staEnabled && strlen(d.staSsid) == 0) return false;
-    if (d.rotation % 90 != 0 || d.rotation < 0 || d.rotation > 270) return false;
+    if (d.rotation != 0 && d.rotation != 180) return false;
     if (strlen(d.webPass) < 4) return false;
     if (!(d.batCal > 0.8f && d.batCal < 1.25f)) return false;
     if (d.micGain < 0 || d.micGain > 40 || (d.micCodec != 0 && d.micCodec != 1)) return false;

@@ -45,10 +45,9 @@ bool control(const char *var, int val);
 int  readReg(int reg);            // SCCB registri lugemine (diagnostika), -1 = viga
 String settingsJson();            // hetkeseaded JSON-ina
 
-// Pööramine 0/90/180/270 kraadi päripäeva (salvestatakse NVS-i)
+// Pööramine 0 või 180 kraadi (sensor; salvestatakse NVS-i)
 bool setRotation(int deg);
 int  rotation();
-float rotateMs();                 // keskmine ümberkodeerimise aeg (90°/270°)
 
 // Info veebiliidesele
 const char *sensorName();
@@ -58,7 +57,6 @@ const char *resolutionName();
 bool setFramesize(int fs, bool save = true);
 int  framesize();
 String framesizesJson();          // [{"v":11,"name":"SVGA","w":800,"h":600},…] – sensori toetatud
-bool rotationLimited();           // 90°/270° pööre jäeti resolutsiooni tõttu tegemata
 float fps();                  // tegelik hõive FPS
 size_t lastFrameBytes();
 void addConsumer();           // loendab aktiivseid vaatajaid

@@ -25,13 +25,13 @@ release'ist (FOTA)**.
 
 * **Kaamera:** OV5640 (ka OV2640/OV3660), JPEG, resolutsioon valitav 320×240 … 1920×1080
   (vaikimisi 800×600, ⚙ → 📷 Pilt), pidev autofookus + nupp
-  „Fookus", pööramine nuppudega 0°/90°/180°/270° (kehtib ka RTSP-s), madal viivitus –
+  „Fookus", pööramine 0°/180° (teeb sensor, kehtib ka RTSP-s), madal viivitus –
   aeglase võrgu korral jäetakse kaadrid vahele, puhvrit ei kogune.
 * **Pealeht:** pildi all tegelik kaadrisagedus ja võrgukiirus (kB/s, Mbit/s), mida
-  just see brauser saab; 90°/270° pöörde korral hoiatus madalama FPS-i kohta.
+  just see brauser saab.
 * **RTSP server** (port 554): RTP/JPEG (RFC 2435), UDP ja TCP interleaved,
   kuni 4 klienti. Testitud VLC ja FFmpeg-iga.
-* **Veebiliides:** avalehel ainult pilt ja nupud (peata/jätka, ↺/↻ 90°,
+* **Veebiliides:** avalehel ainult pilt ja nupud (peata/jätka, 0°/180°,
   autofookus, hetktõmmis). Olek ja seaded eraldi lehel (⚙).
 * **Juurdepääs parooliga** (veeb + RTSP), sessiooniküpsis kehtib 30 päeva.
 * **WiFi klient + hotspot korraga.** Hotspotiga ühendudes avaneb telefonis
@@ -88,8 +88,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.7.0
-git push origin v1.7.0
+git tag v1.8.0
+git push origin v1.8.0
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -188,11 +188,11 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
 Full HD 1920×1080 (OV2640 puhul kuni UXGA). Valik rakendub kohe ja salvestub.
 Suurem resolutsioon = väiksem kaadrisagedus ja suurem andmemaht – LTE-s soovitame
 SVGA-d või väiksemat. Kaadripuhvrid eraldatakse käivitusel suurima resolutsiooni
-jaoks. 90°/270° pööret tehakse kuni 1280×1024-ni (suurema juures näidatakse pilti
-pööramata ja pealehel on hoiatus).
+jaoks.
 
-* 180° teeb sensor ise (täiskiirus). 90°/270° puhul kodeeritakse iga kaader ümber
-  (`esp_new_jpeg`, ~260 ms kaadri kohta → ~3–4 fps, pilt 600x800).
+* Pööre: 0° või 180° – teeb sensor ise (täiskiirus, lisamälu pole vaja).
+  90°/270° (tarkvaraline JPEG ümberkodeerimine) eemaldati v1.8.0-s mälu ja
+  protsessoriaja säästmiseks; varem salvestatud 270° muutub 180°-ks, 90° → 0°.
 * `GET /api/cam?var=<nimi>&val=<väärtus>` – nt `rotate`, `aec`, `aec_value`,
   `agc_gain`, `brightness`, `hmirror`, `vflip`, `framesize`, `quality`, `ir`.
   Ilma parameetriteta tagastab kõik seaded.

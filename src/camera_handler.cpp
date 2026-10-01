@@ -9,8 +9,6 @@
 #include "esp_heap_caps.h"
 #include <atomic>
 #include "ESP32_OV5640_AF.h"   // OV5640 AF püsivara laadija (0015/ESP32-OV5640-AF)
-#include "esp_jpeg_dec.h"      // esp_new_jpeg: SIMD-kiirendatud JPEG dekooder/kooder
-#include "esp_jpeg_enc.h"
 #include "settings.h"
 
 static const char *TAG = "CAM";
@@ -51,13 +49,10 @@ static volatile uint8_t  s_afRaw = 0xFF;
 static const char       *s_sensor = "unknown";
 
 // --- Pööramine -------------------------------------------------------------
-static volatile int      s_rotation = 0;        // 0/90/180/270
+static volatile int      s_rotation = 0;        // 0 / 180
 static int               s_framesize = CAM_FRAME_SIZE;
 static framesize_t       s_maxFs = CAM_FRAME_SIZE_MAX;
-static volatile bool     s_rotLimited = false;
-static volatile bool     s_rot90 = false;       // kas tarkvaraline 90° pööre
 static bool              s_userVflip = false, s_userHmirror = false;
-static volatile float    s_rotMs = 0;
 
 // --- Abi -------------------------------------------------------------------
 static bool ensureCap(uint8_t *&buf, size_t &cap, size_t need) {
@@ -165,78 +160,14 @@ static void afCommand(uint8_t cmd) {
 }
 
 // --- Pööramine ---------------------------------------------------------------
-// 180° = sensori vflip + hmirror (tasuta). 90° = tarkvaraline ümberkodeerimine.
-// 270° = sensori 180° + tarkvaraline 90°.
+// Ainult 0° ja 180°: 180° = sensori vflip + hmirror (lisamälu ega -aega ei kulu).
+// 90°/270° (tarkvaraline JPEG ümberkodeerimine) eemaldati v1.8.0-s mälu säästmiseks.
 static void applySensorFlip() {
     sensor_t *s = esp_camera_sensor_get();
     if (!s) return;
-    bool flip180 = (s_rotation == 180 || s_rotation == 270);
+    bool flip180 = (s_rotation == 180);
     s->set_vflip(s, s_userVflip ^ flip180);
     s->set_hmirror(s, s_userHmirror ^ flip180);
-}
-
-static jpeg_dec_handle_t s_dec = nullptr;
-static jpeg_enc_handle_t s_enc = nullptr;
-static int      s_encW = 0, s_encH = 0;
-static uint8_t *s_raw = nullptr;  static int s_rawCap = 0;
-static uint8_t *s_jpg = nullptr;  static int s_jpgCap = 0;
-
-// Dekodeeri + pööra 90° päripäeva + kodeeri. Tulemus s_jpg-s.
-static bool rotateJpeg90(const uint8_t *in, size_t inLen, int &outLen, uint16_t &w, uint16_t &h) {
-    if (!s_dec) {
-        jpeg_dec_config_t dc = DEFAULT_JPEG_DEC_CONFIG();
-        dc.output_type = JPEG_PIXEL_FORMAT_CbYCrY;           // YUV422, 2 B/px
-        dc.rotate = JPEG_ROTATE_90D;
-        if (jpeg_dec_open(&dc, &s_dec) != JPEG_ERR_OK) { LOGE(TAG, "rotate: dec_open"); s_dec = nullptr; return false; }
-    }
-    jpeg_dec_io_t io = {};
-    io.inbuf = (uint8_t *)in;
-    io.inbuf_len = inLen;
-    jpeg_dec_header_info_t info = {};
-    jpeg_error_t he = jpeg_dec_parse_header(s_dec, &io, &info);
-    if (he != JPEG_ERR_OK) { LOGE(TAG, "rotate: parse_header %d", he); return false; }
-    int need = 0;
-    if (jpeg_dec_get_outbuf_len(s_dec, &need) != JPEG_ERR_OK || need <= 0) {
-        LOGE(TAG, "rotate: outbuf_len %d", need);
-        return false;
-    }
-    if (need > s_rawCap) {
-        // ~1 MB (800x600x2) – ainult PSRAM-i mahub; 16-baidine joondus (SIMD)
-        if (s_raw) heap_caps_free(s_raw);
-        s_raw = (uint8_t *)heap_caps_aligned_alloc(16, need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        s_rawCap = s_raw ? need : 0;
-        if (!s_raw) { LOGE(TAG, "rotate: PSRAM %d B eraldamine ebaõnnestus", need); return false; }
-    }
-    io.outbuf = s_raw;
-    jpeg_error_t de = jpeg_dec_process(s_dec, &io);
-    if (de != JPEG_ERR_OK) { LOGE(TAG, "rotate: dec_process %d (%ux%u, need %d)", de, info.width, info.height, need); return false; }
-
-    // Pööramisega dekooder võib päises anda juba pööratud mõõtmed – võrdle
-    // kaamera algsete mõõtmetega (w, h), et väljund oleks alati h x w.
-    const int ow = (info.width == w) ? info.height : info.width;
-    const int oh = (info.width == w) ? info.width : info.height;
-    if (ow * oh * 2 > need) { LOGE(TAG, "rotate: puhver %d < %d", need, ow * oh * 2); return false; }
-    if (!s_enc || ow != s_encW || oh != s_encH) {
-        if (s_enc) jpeg_enc_close(s_enc);
-        jpeg_enc_config_t ec = DEFAULT_JPEG_ENC_CONFIG();
-        ec.width = ow;
-        ec.height = oh;
-        ec.src_type = JPEG_PIXEL_FORMAT_CbYCrY;
-        ec.subsampling = JPEG_SUBSAMPLE_422;                  // RTP/JPEG tüüp 0
-        ec.quality = CAM_ROTATE_QUALITY;
-        jpeg_error_t oe = jpeg_enc_open(&ec, &s_enc);
-        if (oe != JPEG_ERR_OK) { LOGE(TAG, "rotate: enc_open %d (%dx%d)", oe, ow, oh); s_enc = nullptr; return false; }
-        s_encW = ow; s_encH = oh;
-        int cap = ow * oh / 2 + 16384;                        // piisav ka detailse pildi jaoks
-        if (s_jpg) heap_caps_free(s_jpg);
-        s_jpg = (uint8_t *)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        s_jpgCap = s_jpg ? cap : 0;
-        if (!s_jpg) { LOGE(TAG, "rotate: väljundpuhvri eraldamine ebaõnnestus"); return false; }
-    }
-    jpeg_error_t ee = jpeg_enc_process(s_enc, s_raw, ow * oh * 2, s_jpg, s_jpgCap, &outLen);
-    if (ee != JPEG_ERR_OK) { LOGE(TAG, "rotate: enc_process %d (%dx%d, need %d, cap %d)", ee, ow, oh, need, s_jpgCap); return false; }
-    w = ow; h = oh;
-    return true;
 }
 
 // --- Hõivetask -------------------------------------------------------------
@@ -293,14 +224,6 @@ static void captureTask(void *) {
         size_t srcLen = fb->len;
         uint16_t fw = fb->width, fh = fb->height;
         bool okFrame = fb->format == PIXFORMAT_JPEG && fb->len > 128;
-        s_rotLimited = s_rot90 && (uint32_t)fw * fh > CAM_ROT_MAX_PIXELS;
-        if (okFrame && s_rot90 && !s_rotLimited) {
-            uint32_t r0 = millis();
-            int outLen = 0;
-            okFrame = rotateJpeg90(fb->buf, fb->len, outLen, fw, fh);
-            if (okFrame) { src = s_jpg; srcLen = outLen; }
-            s_rotMs = s_rotMs * 0.9f + (millis() - r0) * 0.1f;
-        }
 
         if (okFrame) {
             xSemaphoreTake(s_mtx, portMAX_DELAY);
@@ -344,16 +267,13 @@ bool begin() {
     initAutofocus();
     s_ready = true;
     {
-        int r = Settings::get().rotation;
+        int r = Settings::get().rotation;   // 0 või 180 (vana 90°/270° teisendab Settings::load)
         s_rotation = r;
-        s_rot90 = (r == 90 || r == 270);
         applySensorFlip();
         if (r) LOGI(TAG, "Pildi pööre %d°", r);
     }
-    // Core 1 – PPP/lwIP töötab core 0 peal. Prioriteet 2 < voo saatjad (3):
-    // 90°/270° ümberkodeerimine (~260 ms/kaader) hõivab muidu kogu tuuma ja
-    // MJPEG/RTSP saatjad jäävad protsessoriajast ilma (vaataja sai ~0,5 fps).
-    xTaskCreatePinnedToCore(captureTask, "cam_capture", 12288, nullptr, 2, nullptr, 1);
+    // Core 1 – PPP/lwIP töötab core 0 peal. Prioriteet 2 < voo saatjad (3).
+    xTaskCreatePinnedToCore(captureTask, "cam_capture", 6144, nullptr, 2, nullptr, 1);
     return true;
 }
 
@@ -450,19 +370,17 @@ String settingsJson() {
 
 bool setRotation(int deg) {
     deg = ((deg % 360) + 360) % 360;
-    if (deg % 90) return false;
+    if (deg != 0 && deg != 180) return false;
     s_rotation = deg;
-    s_rot90 = (deg == 90 || deg == 270);
     applySensorFlip();
     Settings::Data d = Settings::get();
     d.rotation = deg;
     Settings::save(d);
-    LOGI(TAG, "Pildi pööre %d°%s", deg, s_rot90 ? " (tarkvaraline ümberkodeerimine)" : "");
+    LOGI(TAG, "Pildi pööre %d°", deg);
     return true;
 }
 
 int rotation() { return s_rotation; }
-float rotateMs() { return s_rot90 ? s_rotMs : 0; }
 
 bool afSupported() { return s_afOk; }
 
@@ -526,7 +444,6 @@ bool setFramesize(int fs, bool save) {
 }
 
 int framesize() { return s_framesize; }
-bool rotationLimited() { return s_rotLimited; }
 
 String framesizesJson() {
     String j = "[";

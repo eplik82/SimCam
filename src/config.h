@@ -121,18 +121,13 @@
 // resolutsiooni saaks hiljem suurendada. FHD (1920×1080) on ka RTP/JPEG
 // piirist (2040 px) väiksem; OV2640 puhul piirab sensor UXGA-ga.
 #define CAM_FRAME_SIZE_MAX   FRAMESIZE_FHD
-// 90°/270° pööre vajab dekodeerimiseks laius × kõrgus × 2 baiti PSRAM-i ja
-// ~0,3 s kaadri kohta 800×600 juures – suurematel resolutsioonidel pööret ei tehta.
-#define CAM_ROT_MAX_PIXELS   (1280 * 1024)
 #define CAM_JPEG_QUALITY     14          // 0–63, väiksem = parem kvaliteet/suurem fail
 #define CAM_XCLK_HZ          20000000    // OV5640/OV2640 jaoks 20 MHz
 #define CAM_FB_COUNT         2           // topeltpuhver PSRAM-is
 #define CAM_MAX_FPS          15          // hõivatud kaadrite ülempiir
 #define CAM_AF_CONTINUOUS    1           // 1 = pidev autofookus, 0 = ainult nupuga
-// Pildi pööre (vaikimisi; muudetav veebiliidesest). 180° teeb sensor ise,
-// 90°/270° puhul kodeeritakse iga kaader ümber (esp_new_jpeg) → veidi madalam FPS.
+// Pildi pööre (vaikimisi; muudetav veebiliidesest): 0 või 180 (teeb sensor ise)
 #define CAM_ROTATION_DEFAULT 0
-#define CAM_ROTATE_QUALITY   60          // ümberkodeerimise JPEG kvaliteet 1–100
 
 // -----------------------------------------------------------------------------
 //  Serverid
