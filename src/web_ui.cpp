@@ -125,10 +125,29 @@ static void logHotspot(httpd_req_t *req) {
     LOGI(TAG, "Hotspot HTTP: %s%s", host, req->uri);
 }
 
+// Leht saadetakse tükkidena; märgend {{NAME}} asendatakse kaamera nimega (HTML-varjestatud)
 static esp_err_t sendPage(httpd_req_t *req, const char *html) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, html, strlen_P(html));
+    const Settings::Data d = Settings::get();
+    char name[sizeof(d.camName) * 6];
+    size_t j = 0;
+    for (const char *c = d.camName; *c && j + 7 < sizeof(name); c++) {
+        const char *e = *c == '&' ? "&amp;" : *c == '<' ? "&lt;" : *c == '>' ? "&gt;" : *c == '"' ? "&quot;" : nullptr;
+        if (e) { size_t l = strlen(e); memcpy(name + j, e, l); j += l; } else name[j++] = *c;
+    }
+    name[j] = 0;
+    static const char TOK[] = "{{NAME}}";
+    const char *p = html;
+    for (;;) {
+        const char *t = strstr(p, TOK);
+        size_t n = t ? (size_t)(t - p) : strlen(p);
+        if (n && httpd_resp_send_chunk(req, p, n) != ESP_OK) return ESP_FAIL;
+        if (!t) break;
+        if (httpd_resp_send_chunk(req, name, j) != ESP_OK) return ESP_FAIL;
+        p = t + sizeof(TOK) - 1;
+    }
+    return httpd_resp_send_chunk(req, nullptr, 0);
 }
 
 // --- JSON abi ----------------------------------------------------------------
@@ -571,18 +590,19 @@ static esp_err_t h_favicon(httpd_req_t *req) {
 static esp_err_t h_config_get(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     Settings::Data d = Settings::get();
-    char ss[70], as[70], apn[130], buf[1400];
+    char ss[70], as[70], apn[130], nm[90], buf[1500];
     jsonEsc(ss, sizeof(ss), d.staSsid);
+    jsonEsc(nm, sizeof(nm), d.camName);
     jsonEsc(as, sizeof(as), d.apSsid);
     jsonEsc(apn, sizeof(apn), d.apn);
     // Paroole ei saadeta kunagi välja – ainult info, kas need on määratud
     int n = snprintf(buf, sizeof(buf),
-        "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
+        "{\"cam_name\":\"%s\",\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
         "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s,"
         "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"rtsp_audio\":%s,"
         "\"framesize\":%d,\"framesizes\":%s}",
-        d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
+        nm, d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
         d.lteEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
         strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false",
@@ -617,6 +637,22 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     const bool oldLte = d.lteEnabled;
     const Settings::Data before = d;
     char v[70];
+    char nv[130];                              // 40 baiti UTF-8 = kuni 120 märki %XX kujul
+    if (formField(body, "cam_name", nv, sizeof(nv))) {
+        // tühikud servadest maha; tühi nimi → vaikenimi
+        char *s = nv; while (*s == ' ') s++;
+        size_t l = strlen(s); while (l && s[l - 1] == ' ') s[--l] = 0;
+        strlcpy(d.camName, *s ? s : CAM_NAME_DEFAULT, sizeof(d.camName));
+        // ära jäta lõppu poolikut UTF-8 märki (strlcpy võis lõigata)
+        l = strlen(d.camName);
+        size_t k = l;
+        while (k && ((uint8_t)d.camName[k - 1] & 0xC0) == 0x80) k--;          // jätkubaidid
+        if (k && ((uint8_t)d.camName[k - 1] & 0x80)) {                         // k-1 = mitmebaidise algus
+            uint8_t c0 = d.camName[k - 1];
+            size_t need = (c0 & 0xE0) == 0xC0 ? 2 : (c0 & 0xF0) == 0xE0 ? 3 : 4;
+            if (l - (k - 1) < need) d.camName[k - 1] = 0;
+        }
+    }
     if (formField(body, "sta_en", v, sizeof(v))) d.staEnabled = v[0] == '1';
     if (formField(body, "sta_ssid", v, sizeof(v))) strlcpy(d.staSsid, v, sizeof(d.staSsid));
     if (formField(body, "sta_pass", v, sizeof(v)) && v[0]) strlcpy(d.staPass, v, sizeof(d.staPass));

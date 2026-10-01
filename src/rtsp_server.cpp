@@ -396,7 +396,7 @@ static bool handleRequest(Session &s, char *req) {
         int sl = snprintf(sdp, sizeof(sdp),
                  "v=0\r\n"
                  "o=- %lu 1 IN IP4 %s\r\n"
-                 "s=SimCam live\r\n"
+                 "s=%s\r\n"
                  "c=IN IP4 0.0.0.0\r\n"
                  "t=0 0\r\n"
                  "a=control:*\r\n"
@@ -405,7 +405,7 @@ static bool handleRequest(Session &s, char *req) {
                  "a=rtpmap:26 JPEG/90000\r\n"
                  "a=framerate:%d\r\n"
                  "a=control:track1\r\n",
-                 (unsigned long)s.sessionId, ip, CAM_MAX_FPS);
+                 (unsigned long)s.sessionId, ip, cfg.camName, CAM_MAX_FPS);
         if (s.audio)
             snprintf(sdp + sl, sizeof(sdp) - sl, s.aCodec ?
                      "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 L16/16000/1\r\na=control:track2\r\n" :

@@ -32,13 +32,14 @@ input[type=text],input[type=password]{font:inherit;font-size:15px;padding:9px 10
 static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="et"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>SimCam</title><link rel="stylesheet" href="/style.css">
+<title>{{NAME}}</title><link rel="stylesheet" href="/style.css">
 <style>
 html,body{height:100%;background:#000}
 body{display:flex;flex-direction:column;color:#fff}
 .stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
 .stage img{max-width:100%;max-height:100%;object-fit:contain;display:block}
 .msg{position:absolute;color:#9aa;font-size:15px;text-align:center;padding:16px}
+.cname{position:absolute;top:10px;left:10px;max-width:calc(100% - 80px);background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:10px;padding:6px 12px;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:2}
 .gear{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:50%;width:42px;height:42px;display:flex;align-items:center;justify-content:center;font-size:20px;text-decoration:none}
 .bar{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;padding:10px 10px calc(10px + env(safe-area-inset-bottom));background:#0d0f14;border-top:1px solid #222}
 .bar button{background:#1b2029;border-color:#2a303b;color:#e8ebf1;min-width:52px;justify-content:center;padding:10px 14px;font-size:15px}
@@ -62,7 +63,8 @@ body{display:flex;flex-direction:column;color:#fff}
 @media (orientation:landscape) and (max-height:600px){
  .stage{position:fixed;inset:0}
  .stage img{width:100%;height:100%}
- .info{position:fixed;top:calc(8px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left));z-index:2;background:rgba(0,0,0,.5);border:0;border-radius:8px;min-height:0;padding:4px 10px;font-size:12px}
+ .cname{position:fixed;top:calc(8px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left));font-size:14px;padding:4px 10px}
+ .info{position:fixed;top:calc(44px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left));z-index:2;background:rgba(0,0,0,.5);border:0;border-radius:8px;min-height:0;padding:4px 10px;font-size:12px}
  .bar{position:fixed;left:0;right:0;bottom:0;z-index:2;background:linear-gradient(transparent,rgba(0,0,0,.65));border:0;padding:16px calc(10px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left))}
  .bar button,.bar .rot{background:rgba(27,32,41,.72);border-color:rgba(255,255,255,.15)}
  .bar .rot button{background:transparent}
@@ -76,6 +78,7 @@ body{display:flex;flex-direction:column;color:#fff}
 <div class="stage">
   <img id="view" alt="">
   <span class="msg" id="msg">Ühendan…</span>
+  <span class="cname">{{NAME}}</span>
   <a class="gear" href="/settings" title="Seaded">⚙</a>
 </div>
 <div class="info" id="info"><span id="iBat" style="display:none"></span><span id="iMic" style="display:none"></span><span id="iStat">Ühendan…</span></div>
@@ -150,7 +153,7 @@ setPlay(true);stats();
 static const char SETTINGS_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="et"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SimCam – seaded</title><link rel="stylesheet" href="/style.css">
+<title>{{NAME}} – seaded</title><link rel="stylesheet" href="/style.css">
 <style>
 header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:2}
 header h1{font-size:18px;margin:0;flex:1}
@@ -209,7 +212,7 @@ select.sel{width:100%;min-width:0;max-width:100%;font:inherit;font-size:15px;pad
 .lvl.hot>div{background:var(--bad)}
 details form{margin-top:8px}
 </style></head><body>
-<header><a class="btn" href="/">← Vaade</a><h1>Seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
+<header><a class="btn" href="/">← Vaade</a><h1>{{NAME}} – seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
 <main>
 <h3>Olek</h3>
 <div class="grid">
@@ -265,7 +268,13 @@ details form{margin-top:8px}
 <h3>Seaded</h3>
 <div class="cols">
  <section class="card"><h2>📷 Pilt</h2>
-  <form id="fCam">
+  <form id="fName" style="margin-bottom:14px">
+   <label>Kaamera nimi
+    <span class="inl"><input type="text" id="f_cam_name" maxlength="40" placeholder="nt Garaaž, Suvila õu"><button class="pri" type="submit">Salvesta</button></span></label>
+   <div class="note">Näidatakse pealehe ülaservas, brauseri vahelehel, sisselogimise ja logi lehel ning RTSP voo nimena.</div>
+  </form>
+  <hr>
+  <form id="fCam" style="margin-top:10px">
    <label>Resolutsioon
     <select class="sel" id="f_fs"></select></label>
    <div class="note" id="fsNote">Suurem resolutsioon = detailsem pilt, kuid väiksem kaadrisagedus ja suurem andmemaht. Mobiilivõrgus (LTE) soovitame SVGA 800×600 või väiksemat.</div>
@@ -388,6 +397,7 @@ function kb(b){return b>1048576?(b/1048576).toFixed(2)+' MB':(b/1024).toFixed(0)
 function bars(n){let h='<span class="bars">';for(let i=0;i<4;i++)h+=`<i class="${i<n?'on':''}" style="height:${4+i*3}px"></i>`;return h+'</span>'}
 let rtspAuth=true;
 async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-store'})).json();
+ if(document.activeElement!==$('f_cam_name'))$('f_cam_name').value=c.cam_name||'';
  $('f_sta_en').checked=c.sta_en;$('f_sta_ssid').value=c.sta_ssid;$('f_sta_pass').placeholder=c.sta_has_pass?'(muutmata)':'(avatud võrk)';
  $('f_ap_en').checked=c.ap_en;$('f_ap_ssid').value=c.ap_ssid;
  $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;
@@ -448,6 +458,8 @@ $('f_af_pos').onchange=async e=>{afDrag=false;await api('/api/cam?var=af_pos&val
 $('bAfNow').onclick=async()=>{const b=$('bAfNow');b.disabled=true;try{const r=await api('/api/focus',{method:'POST'});toast(r.ok?'Fokusseerin…':'Autofookus pole saadaval')}catch(e){}
  let k=0;const t=setInterval(()=>{afLoad();if(++k>12){clearInterval(t);b.disabled=false}},500)};
 afLoad();setInterval(afLoad,5000);
+$('fName').onsubmit=async e=>{e.preventDefault();const v=$('f_cam_name').value.trim();await save({cam_name:v},'Nimi salvestatud');
+ const n=v||'SimCam';document.title=n+' – seaded';document.querySelector('header h1').textContent=n+' – seaded'};
 $('fCam').onsubmit=e=>{e.preventDefault();save({framesize:$('f_fs').value},'Resolutsioon muudetud')};
 $('f_mic_gain').oninput=()=>$('m_gain_t').textContent=$('f_mic_gain').value+' dB';
 $('f_mic_en').onchange=()=>{const on=$('f_mic_en').checked;$('micOn').style.display=on?'':'none';if(!on)SimAudio.stop();
@@ -544,14 +556,14 @@ loadCfg();poll();otaPoll();batPoll();
 static const char LOGIN_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="et"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SimCam – sisselogimine</title><link rel="stylesheet" href="/style.css">
+<title>{{NAME}} – sisselogimine</title><link rel="stylesheet" href="/style.css">
 <style>
 body{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
 .box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;width:100%;max-width:340px;display:grid;gap:12px}
 h1{margin:0;font-size:20px}.err{color:var(--bad);font-size:14px;min-height:1em}
 </style></head><body>
 <form class="box" method="post" action="/login">
- <h1>SimCam</h1>
+ <h1>{{NAME}}</h1>
  <input type="password" name="pass" placeholder="Parool" autofocus autocomplete="current-password" required>
  <span class="err" id="err"></span>
  <button class="pri" type="submit">Logi sisse</button>
@@ -565,7 +577,7 @@ h1{margin:0;font-size:20px}.err{color:var(--bad);font-size:14px;min-height:1em}
 static const char LOG_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="et"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SimCam – logi</title><link rel="stylesheet" href="/style.css">
+<title>{{NAME}} – logi</title><link rel="stylesheet" href="/style.css">
 <style>
 body{display:flex;flex-direction:column;height:100vh;height:100dvh}
 header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card)}
@@ -578,7 +590,7 @@ input[type=search]{font:inherit;border:1px solid var(--line);background:var(--ca
 #log .W{color:var(--warn)}#log .E{color:var(--bad);font-weight:600}#log .t{color:var(--mut)}
 button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 </style></head><body>
-<header><a class="btn" href="/settings">← Seaded</a><h1>Logi</h1>
+<header><a class="btn" href="/settings">← Seaded</a><h1>{{NAME}} – logi</h1>
  <select id="src"><option value="cur">See käivitus</option><option value="prev">Eelmine käivitus</option></select>
  <select id="lvl"><option value="">Kõik</option><option value="WE">Hoiatused + vead</option><option value="E">Ainult vead</option></select>
  <input type="search" id="q" placeholder="Filtreeri…">

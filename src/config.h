@@ -158,6 +158,7 @@
 //   RTSP: rtsp://admin:<parool>@<IP>:554/live
 #define AUTH_USER            "admin"
 #define WEB_PASS_DEFAULT     "simcam"
+#define CAM_NAME_DEFAULT     "SimCam"    // kaamera nimi (lehtede päis, vahekaart, RTSP)
 
 // -----------------------------------------------------------------------------
 //  WiFi (vaikeseaded – muudetavad veebiliidesest, salvestatakse NVS-i)

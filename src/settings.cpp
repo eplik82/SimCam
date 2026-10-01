@@ -28,6 +28,7 @@ static void defaults(Data &d) {
     d.simPin[0] = 0;
     d.apn[0] = 0;
     strlcpy(d.webPass, WEB_PASS_DEFAULT, sizeof(d.webPass));
+    strlcpy(d.camName, CAM_NAME_DEFAULT, sizeof(d.camName));
     d.authSalt[0] = 0;
     d.rtspAuth = true;
     d.autoUpdate = false;
@@ -58,6 +59,8 @@ void load() {
     Preferences p;
     if (p.begin(NS, true)) {
         d.staEnabled = p.getBool("sta_en", d.staEnabled);
+        if (p.isKey("cam_name")) p.getString("cam_name", d.camName, sizeof(d.camName));
+        if (!d.camName[0]) strlcpy(d.camName, CAM_NAME_DEFAULT, sizeof(d.camName));
         if (p.isKey("sta_ssid")) p.getString("sta_ssid", d.staSsid, sizeof(d.staSsid));
         if (p.isKey("sta_pass")) p.getString("sta_pass", d.staPass, sizeof(d.staPass));
         d.apEnabled = p.getBool("ap_en", d.apEnabled);
@@ -120,8 +123,10 @@ bool save(const Data &din) {
     if (!(d.batCal > 0.8f && d.batCal < 1.25f)) return false;
     if (d.micGain < 0 || d.micGain > 40 || (d.micCodec != 0 && d.micCodec != 1)) return false;
     for (const char *c = d.simPin; *c; c++) if (*c < '0' || *c > '9') return false;   // PIN = numbrid
+    if (!d.camName[0]) return false;
     Preferences p;
     if (!p.begin(NS, false)) return false;
+    p.putString("cam_name", d.camName);
     p.putBool("sta_en", d.staEnabled);
     p.putString("sta_ssid", d.staSsid);
     p.putString("sta_pass", d.staPass);

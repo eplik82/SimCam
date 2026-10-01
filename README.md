@@ -31,6 +31,9 @@ release'ist (FOTA)**.
   just see brauser saab. Telefon horisontaalis → pilt üle kogu ekraani, info ja nupud
   jäävad poolläbipaistvalt pildi peale (brauseri täisekraan lülitub sisse pööramisel
   või esimesel puudutusel; iPhone'i Safari peidab ainult lehe enda ääred).
+* **Kaamera nimi** (⚙ → 📷 Pilt, kuni 40 märki, täpitähed lubatud): pealehe ülaservas,
+  brauseri vahekaardil, sisselogimise, logi ja seadete lehe päises ning RTSP voo nimena
+  (SDP `s=`). Tühi nimi = „SimCam".
 * **Aku säästmine:** kui keegi pilti ei vaata (veeb, RTSP, hetktõmmis), läheb kaamera
   15 s pärast ooterežiimi (OV5640 tarkvaraline standby) ja mikrofon peatub 10 s
   pärast. Uus vaataja äratab mõlemad – esimene kaader ~2 s.

@@ -7,6 +7,7 @@
 namespace Settings {
 
 struct Data {
+    char camName[41];         // kaamera nimi (kuni 40 baiti UTF-8)
     bool staEnabled;
     char staSsid[33];
     char staPass[65];
