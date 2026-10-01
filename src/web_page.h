@@ -48,6 +48,10 @@ body{display:flex;flex-direction:column;color:#fff}
 .info b{color:#e8ebf1;font-weight:600}
 .info .warn{color:#f0b429}
 .info .low{color:#ff6b6b;font-weight:600}
+.focus{display:none;align-items:center;gap:10px;padding:6px 14px;background:#0d0f14;color:#aab2c0;font-size:13px;border-top:1px solid #222}
+.focus.show{display:flex}
+.focus input{flex:1;min-width:0;accent-color:var(--acc);height:28px}
+.focus b{color:#e8ebf1;font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
 .mbar{display:inline-block;width:46px;height:7px;background:#2a303b;border-radius:4px;overflow:hidden;vertical-align:1px;margin-left:4px}
 .mbar>i{display:block;height:100%;background:#2fbf71;transition:width .3s}
 .rot{display:inline-flex;border:1px solid #2a303b;border-radius:10px;overflow:hidden}
@@ -66,6 +70,7 @@ body{display:flex;flex-direction:column;color:#fff}
  .bar .lbl{display:none}
  .gear{top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));z-index:3}
  .toast{bottom:76px}
+ .focus{position:fixed;left:calc(12px + env(safe-area-inset-left));right:calc(12px + env(safe-area-inset-right));bottom:64px;z-index:2;background:rgba(0,0,0,.5);border:0;border-radius:10px;max-width:520px;margin:0 auto}
 }
 </style></head><body>
 <div class="stage">
@@ -74,6 +79,7 @@ body{display:flex;flex-direction:column;color:#fff}
   <a class="gear" href="/settings" title="Seaded">⚙</a>
 </div>
 <div class="info" id="info"><span id="iBat" style="display:none"></span><span id="iMic" style="display:none"></span><span id="iStat">Ühendan…</span></div>
+<div class="focus" id="focusRow"><span title="Kaugele">🏔</span><input type="range" id="fpos" min="0" max="1023" step="1" aria-label="Fookus (läätse asend)"><span title="Lähedale">🌼</span><b id="fposT">-</b></div>
 <div class="bar">
   <button id="bPlay" title="Peata / jätka vaade">⏸<span class="lbl">Peata</span></button>
   <span class="rot" title="Pildi pööre"><button data-r="0">0°</button><button data-r="180">180°</button></span>
@@ -120,7 +126,16 @@ $('bSnap').onclick=()=>{const a=document.createElement('a');const t=new Date().t
 SimAudio.onstate=on=>{const b=$('bAudio');b.classList.toggle('on',on);b.firstChild.textContent=on?'🔊':'🔈'};
 SimAudio.onerror=m=>toast('Heli: '+m);
 $('bAudio').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
-api('/api/cam').then(r=>r.json()).then(c=>{rot=c.rotate||0;showRot()}).catch(()=>{});
+// Käsitsi fookus: liugur nähtav ainult siis, kui seadetes on fookuse režiim "Käsitsi"
+let fDrag=false,fT=0;
+async function camInfo(){try{const c=await (await api('/api/cam',{cache:'no-store'})).json();
+ rot=c.rotate||0;showRot();
+ const man=c.af&&c.af_mode==2;$('focusRow').classList.toggle('show',man);
+ if(man&&!fDrag){$('fpos').value=c.af_pos;$('fposT').textContent=c.af_pos}}catch(e){}}
+$('fpos').oninput=e=>{fDrag=true;$('fposT').textContent=e.target.value;const n=Date.now();
+ if(n-fT>150){fT=n;api('/api/cam?var=af_pos_live&val='+e.target.value).catch(()=>{})}};
+$('fpos').onchange=async e=>{try{await api('/api/cam?var=af_pos&val='+e.target.value)}catch(x){}fDrag=false};
+camInfo();setInterval(camInfo,10000);
 // Horisontaalis täisekraan (brauser lubab seda ainult pärast puudutust → proovi ka esimesel puudutusel)
 const land=matchMedia('(orientation:landscape) and (max-height:600px)'),de=document.documentElement;
 function fsOn(){if(land.matches&&!document.fullscreenElement&&de.requestFullscreen)de.requestFullscreen({navigationUI:'hide'}).catch(()=>{})}

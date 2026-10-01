@@ -195,7 +195,7 @@ OV5640 AF püsivara (0015/ESP32-OV5640-AF) laetakse käivitusel. Režiim: ⚙ �
 |---|---|
 | **Ühekordne** (vaikimisi) | Käivitusel ja „Fookus" nupuga täisotsing, siis lääts jääb paigale – ka pärast kaamera ooterežiimi |
 | **Pidev** | AF püsivara teravustab ise ümber, kui pilt muutub |
-| **Käsitsi** | Läätse asend liuguriga 0 (lõpmatus) … 1023 (lähedal); „Fookus" leiab teravaima asendi ja salvestab selle |
+| **Käsitsi** | Läätse asend liuguriga 0 (lõpmatus) … 1023 (lähedal) – liugur on seadetes **ja pealehel** pildi all (horisontaalis pildi peal); „Fookus" leiab teravaima asendi ja salvestab selle |
 
 **Miks varem pilt fookusesse ei jäänud (≤ v1.9.0):** pidevas režiimis käivitatud
 „Fookus" otsis püsivaras vaid ±20 ühikut praeguse asendi ümber; 4 s pärast lülitas kood
