@@ -88,8 +88,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.8.0
-git push origin v1.8.0
+git tag v1.8.1
+git push origin v1.8.1
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse

@@ -185,7 +185,7 @@ void begin() {
     s_hist = (uint16_t *)heap_caps_malloc(BAT_HIST_LEN * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     s_raw = readAdcV();
     s_st.state = State::Measuring;
-    xTaskCreatePinnedToCore(task, "battery", 3072, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(task, "battery", 4096, nullptr, 1, nullptr, 0);
     const Settings::Data cfg = Settings::get();
     LOGI(TAG, "Aku pinge %.2f V (GPIO%d, kalibreering ×%.3f)%s", s_raw * cfg.batCal, BAT_ADC_PIN,
          cfg.batCal, cfg.batEnabled ? "" : " – aku jälgimine seadetes väljas");

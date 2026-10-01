@@ -751,12 +751,14 @@ static void audioTask(void *arg) {
     httpd_resp_set_hdr(req, "X-Audio-Rate", l16 ? "16000" : "8000");
     LOGI(TAG, "Brauseri helivoog lisandus (%d)", (int)s_audioStreams);
 
+    // Puhvrid kuhjas, mitte pinus: varem 2,6 kB pinus + lwIP saatmine + logi
+    // ületas 4 kB pinu → seade taaskäivitus (v1.6.0–v1.8.0 "Kuula" nupp).
     const size_t N = MIC_RATE / 25;                           // 40 ms
-    int16_t pcm[MIC_RATE / 25];
-    uint8_t out[MIC_RATE / 25 * 2];
+    int16_t *pcm = (int16_t *)malloc(N * sizeof(int16_t));
+    uint8_t *out = (uint8_t *)malloc(N * 2);
     uint32_t pos = Audio::position(), skipped;
     uint32_t idle = millis();
-    for (;;) {
+    for (;pcm && out;) {
         if (!Audio::running()) {
             if (millis() - idle > 3000) break;                // mikrofon lülitati välja
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -769,10 +771,12 @@ static void audioTask(void *arg) {
         else len = Audio::encodePcmu(pcm, N, out);
         if (httpd_resp_send_chunk(req, (const char *)out, len) != ESP_OK) break;
     }
+    free(pcm);
+    free(out);
     httpd_resp_send_chunk(req, nullptr, 0);
     httpd_req_async_handler_complete(req);
     s_audioStreams--;
-    LOGI(TAG, "Brauseri helivoog lõppes");
+    LOGI(TAG, "Brauseri helivoog lõppes (pinu vaba min %u B)", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     vTaskDelete(nullptr);
 }
 
@@ -789,7 +793,7 @@ static esp_err_t h_audio(httpd_req_t *req) {
     httpd_req_t *copy = nullptr;
     if (httpd_req_async_handler_begin(req, &copy) != ESP_OK) return ESP_FAIL;
     s_audioStreams++;
-    if (xTaskCreatePinnedToCore(audioTask, "audio_http", 4096, copy, 4, nullptr, 1) != pdPASS) {
+    if (xTaskCreatePinnedToCore(audioTask, "audio_http", 6144, copy, 4, nullptr, 1) != pdPASS) {
         s_audioStreams--;
         httpd_req_async_handler_complete(copy);
         return ESP_FAIL;
