@@ -31,6 +31,7 @@ int   channel();              // kumba I²S kanalit kasutatakse (0 = vasak, 1 = 
 // mikrofon annab signaali ainult ühes kanalis; teine on hõljuv (juhuslik sahin
 // või konstant). Õige kanali leiab, kui rääkida ja vaadata, kumb tase muutub.
 float chanDb(int ch);
+const char *config();         // valitud I²S seadistus (nt "48 kHz Philips")
 
 // Kodeerijad
 uint8_t mulaw(int16_t s);                                     // G.711 µ-law

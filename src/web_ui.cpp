@@ -239,13 +239,13 @@ static esp_err_t sendJson(httpd_req_t *req, const String &j);
 
 static String micJson() {
     const Settings::Data d = Settings::get();
-    char j[260];
+    char j[320];
     snprintf(j, sizeof(j),
         "\"mic\":{\"enabled\":%s,\"running\":%s,\"level\":%.1f,\"peak\":%.1f,\"gain\":%d,"
-        "\"codec\":%d,\"rtsp\":%s,\"listeners\":%d,\"chan\":%d,\"l_db\":%.0f,\"r_db\":%.0f}",
+        "\"codec\":%d,\"rtsp\":%s,\"listeners\":%d,\"chan\":%d,\"used_chan\":%d,\"l_db\":%.0f,\"r_db\":%.0f,\"i2s\":\"%s\"}",
         d.micEnabled ? "true" : "false", Audio::running() ? "true" : "false", Audio::levelDb(),
         Audio::peakDb(), d.micGain, d.micCodec, d.rtspAudio ? "true" : "false", (int)s_audioStreams,
-        d.micChan, Audio::chanDb(0), Audio::chanDb(1));
+        d.micChan, Audio::channel(), Audio::chanDb(0), Audio::chanDb(1), Audio::config());
     return String(j);
 }
 
@@ -631,7 +631,7 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "mic_en", v, sizeof(v))) d.micEnabled = v[0] == '1';
     if (formField(body, "mic_gain", v, sizeof(v))) d.micGain = constrain(atoi(v), 0, 40);
     if (formField(body, "mic_codec", v, sizeof(v))) d.micCodec = v[0] == '1' ? 1 : 0;
-    if (formField(body, "mic_chan", v, sizeof(v))) d.micChan = v[0] == '1' ? 1 : 0;
+    if (formField(body, "mic_chan", v, sizeof(v))) d.micChan = constrain(atoi(v), 0, 2);
     if (formField(body, "rtsp_audio", v, sizeof(v))) d.rtspAudio = v[0] == '1';
     bool autoOn = false;
     if (formField(body, "auto_update", v, sizeof(v))) { autoOn = v[0] == '1' && !d.autoUpdate; d.autoUpdate = v[0] == '1'; }

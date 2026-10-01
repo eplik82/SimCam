@@ -310,7 +310,7 @@ details form{margin-top:8px}
     <label style="margin-top:8px">Helikvaliteet
      <select class="sel" id="f_mic_codec"><option value="0">G.711 8 kHz, 64 kbit/s (soovitatav)</option><option value="1">L16 16 kHz, 256 kbit/s (selgem)</option></select></label>
     <label style="margin-top:8px">Mikrofoni kanal
-     <select class="sel" id="f_mic_chan"><option value="0">Vasak (vaikimisi)</option><option value="1">Parem</option></select></label>
+     <select class="sel" id="f_mic_chan"><option value="2">Automaatne (soovitatav)</option><option value="0">Vasak</option><option value="1">Parem</option></select></label>
     <div class="note" id="m_chan_t">-</div>
     <label class="chk" style="margin-top:8px"><input type="checkbox" id="f_rtsp_audio"> Heli RTSP voos</label>
     <div class="btns" style="margin-top:8px"><button type="button" id="bListen">🔈 Kuula</button><button class="pri" type="submit">Salvesta</button></div>
@@ -397,7 +397,7 @@ SimAudio.onstate=on=>{$('bListen').textContent=on?'⏹ Lõpeta':'🔈 Kuula'};Si
 $('bListen').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
 function showMic(m){if(!m)return;const pct=m.running?Math.max(0,Math.min(100,(m.level+70)/70*100)):0;
  $('m_lvl_b').style.width=pct+'%';$('m_lvl').classList.toggle('hot',m.peak>-3);
- $('m_chan_t').textContent=m.running?`Signaal: vasak ${m.l_db} dBFS, parem ${m.r_db} dBFS. Räägi mikrofoni lähedal – õige on kanal, mille tase muutub.`:'';
+ $('m_chan_t').textContent=m.running?`I²S: ${m.i2s}, kasutusel ${m.used_chan?'parem':'vasak'} kanal. Signaal: vasak ${m.l_db} dBFS, parem ${m.r_db} dBFS (vaikses ruumis peaks mikrofoni kanal olema ~−60…−80 ja teine ~−120).`:'';
  $('m_lvl_t').textContent=m.running?`${m.level.toFixed(0)} dBFS (tipp ${m.peak.toFixed(0)})`:(m.enabled?'käivitub…':'-')}
 $('bReboot').onclick=async()=>{if(!confirm('Kas taaskäivitada seade?'))return;try{await api('/api/reboot',{method:'POST'})}catch(e){}toast('Taaskäivitan…')};
 const OST={idle:'-',checking:'Kontrollin…',uptodate:'Ajakohane ✓',available:'Uuendus saadaval!',updating:'Uuendan…',done:'Paigaldatud – taaskäivitub',error:'Viga'};

@@ -14,16 +14,29 @@
 
 static const char *TAG = "MIC";
 
-// I²S loeb 32 kHz-ga (BCLK 2,048 MHz – MEMS mikrofoni lubatud vahemikus) ja
-// tarkvara teeb sellest 16 kHz (kahe diskreedi keskmine = lihtne madalpääs).
-#define I2S_RATE     (MIC_RATE * 2)
+// I²S loetakse kõrgema sagedusega (BCLK = sagedus × 64) ja tarkvara keskmistab
+// selle 16 kHz-ks. Õige BCLK ja andmevorming leitakse käivitusel proovides (vt
+// probe()): töötava mikrofoni puhul annab üks kanal mõõduka signaali ja teine on
+// vaikne (andmeliinil 10 kΩ maandustakisti R7). Mõlemas kanalis täismahus müra
+// = mikrofon ei tööta selle taktiga/vorminguga.
 #define FRAME_MS     20
-#define FRAME_IN     (I2S_RATE * FRAME_MS / 1000)     // 640 stereopaari / 20 ms
 #define FRAME_OUT    (MIC_RATE * FRAME_MS / 1000)     // 320 diskreeti / 20 ms
+#define MAX_RATE     48000
+#define FRAME_IN_MAX (MAX_RATE * FRAME_MS / 1000)     // 960 stereopaari / 20 ms
 #define RING         65536                            // 4,096 s (2^16 → odav modulo)
 #define PER_MS       (MIC_RATE / 1000)                // 16 diskreeti millisekundis
 
 namespace Audio {
+
+struct I2sCfg { uint32_t rate; bool msb; const char *name; };
+// 48 kHz → BCLK 3,072 MHz (lähim LilyGO näite 2,82 MHz-le), 32 kHz → 2,048 MHz,
+// 16 kHz → 1,024 MHz; Philips (1-bitine viide) ja MSB (viiteta) vorming.
+static const I2sCfg CFGS[] = {
+    {48000, false, "48 kHz Philips"}, {48000, true, "48 kHz MSB"},
+    {32000, false, "32 kHz Philips"}, {32000, true, "32 kHz MSB"},
+    {16000, false, "16 kHz Philips"}, {16000, true, "16 kHz MSB"},
+};
+#define NCFG (sizeof(CFGS) / sizeof(CFGS[0]))
 
 static i2s_chan_handle_t s_rx;
 static TaskHandle_t      s_task;
@@ -34,18 +47,21 @@ static volatile uint32_t s_frameMs;        // millis() viimase kaadri lõpus
 static volatile uint32_t s_framePos;       // s_wpos samal hetkel
 static volatile float    s_gain = 1.0f;    // lineaarne
 static volatile float    s_level = -90, s_peak = -90;
-static volatile int      s_chan = 0;       // 0 = vasak, 1 = parem (seadetest)
+static volatile int      s_chanSetting = 2; // 0 = vasak, 1 = parem, 2 = automaatne
+static volatile int      s_chan = 0;       // tegelikult kasutatav kanal
 static volatile float    s_chanDb[2] = {-120, -120};
+static volatile int      s_cfg = -1;       // valitud CFGS indeks
+static int               s_autoChan = 0;   // proovimisel leitud aktiivne kanal
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-static bool startI2s() {
+static bool startI2s(const I2sCfg &c) {
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    cc.dma_desc_num = 6;
-    cc.dma_frame_num = FRAME_IN / 2;
+    cc.dma_desc_num = 8;
+    cc.dma_frame_num = 240;                   // ≤ 4092 B DMA puhver (240 × 8 B)
     if (i2s_new_channel(&cc, nullptr, &s_rx) != ESP_OK) return false;
     i2s_std_config_t sc = {
-        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(I2S_RATE),
+        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(c.rate),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
@@ -56,6 +72,7 @@ static bool startI2s() {
             .invert_flags = {},
         },
     };
+    if (c.msb) sc.slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO);
     if (i2s_channel_init_std_mode(s_rx, &sc) != ESP_OK || i2s_channel_enable(s_rx) != ESP_OK) {
         i2s_del_channel(s_rx);
         s_rx = nullptr;
@@ -71,59 +88,103 @@ static void stopI2s() {
     s_rx = nullptr;
 }
 
+// Kanali statistika: dispersioon (dBFS 24-bit skaalal) ja nullide osakaal
+struct ChStat { double s = 0, q = 0; uint32_t n = 0, zeros = 0; };
+static void statAdd(ChStat *st, const int32_t *in, int frames) {
+    for (int i = 0; i < frames; i++)
+        for (int c = 0; c < 2; c++) {
+            int32_t raw = in[2 * i + c];
+            double v = raw >> 8;
+            st[c].s += v; st[c].q += v * v; st[c].n++;
+            if ((raw >> 8) == 0 || (raw >> 8) == -1) st[c].zeros++;
+        }
+}
+static float statDb(const ChStat &st) {
+    if (!st.n) return -120;
+    double m = st.s / st.n, var = st.q / st.n - m * m;
+    return var > 1 ? 10 * log10(var) - 20 * log10(8388608.0) : -120;
+}
+
+// Proovi kõik seadistused läbi ja vali see, kus üks kanal on aktiivne ja teine vaikne
+static int probe(int32_t *in) {
+    int best = -1;
+    float bestScore = -1e9;
+    for (int k = 0; k < (int)NCFG && s_run; k++) {
+        if (!startI2s(CFGS[k])) continue;
+        const int frameIn = CFGS[k].rate * FRAME_MS / 1000;
+        ChStat st[2];
+        uint32_t t0 = millis();
+        int32_t firstL = 0, firstR = 0;
+        bool first = true;
+        while (millis() - t0 < 400) {
+            size_t got = 0;
+            if (i2s_channel_read(s_rx, in, frameIn * 8, &got, 200) != ESP_OK || !got) continue;
+            if (millis() - t0 < 100) continue;                  // mikrofoni käivitusaeg
+            if (first) { firstL = in[20]; firstR = in[21]; first = false; }
+            statAdd(st, in, got / 8);
+        }
+        stopI2s();
+        float l = statDb(st[0]), r = statDb(st[1]);
+        // Aktiivne kanal: mikrofoni müra/heli −100…−20 dBFS; vaikne: < −95 dBFS
+        float act = l > r ? l : r, quiet = l > r ? r : l;
+        float score = (act > -100 && act < -20 ? 50 : 0) + (quiet < -95 ? 50 : 0) - fabsf(act + 60) / 10;
+        LOGI(TAG, "Proov %s: vasak %.0f dBFS, parem %.0f dBFS (näide L %08lX R %08lX)%s",
+             CFGS[k].name, l, r, (unsigned long)firstL, (unsigned long)firstR, score >= 90 ? " ✓" : "");
+        if (score > bestScore) { bestScore = score; best = k; s_autoChan = l > r ? 0 : 1; }
+    }
+    if (bestScore < 90) {
+        LOGW(TAG, "Ükski seadistus ei andnud tüüpilist mikrofoni signaali – kasutan %s (vt logi)",
+             CFGS[best < 0 ? 0 : best].name);
+        if (best < 0) { best = 0; s_autoChan = 0; }
+    } else {
+        LOGI(TAG, "Valitud %s, mikrofon %s kanalis", CFGS[best].name, s_autoChan ? "paremas" : "vasakus");
+    }
+    return best;
+}
+
 static void task(void *) {
-    int32_t *in = (int32_t *)heap_caps_malloc(FRAME_IN * 2 * sizeof(int32_t), MALLOC_CAP_INTERNAL);
+    int32_t *in = (int32_t *)heap_caps_malloc(FRAME_IN_MAX * 2 * sizeof(int32_t), MALLOC_CAP_INTERNAL);
     int16_t out[FRAME_OUT];
     float dcX = 0, dcY = 0;                    // alalisvoolu eemaldus (HPF ~20 Hz)
-    // Kanalite diagnostika: 24-bit toorväärtuste dispersioon ~0,5 s aknas
-    double cs[2] = {0, 0}, cq[2] = {0, 0};
-    int cn = 0;
-    bool reported = false;
+    ChStat cst[2];
     double winSq = 0; int winN = 0; int winPeak = 0;
 
-    if (!in || !startI2s()) {
-        LOGE(TAG, "I²S käivitamine ebaõnnestus");
+    if (in && s_cfg < 0) s_cfg = probe(in);   // ~2,5 s; tulemus logis
+    const I2sCfg &cfg = CFGS[s_cfg < 0 ? 0 : s_cfg];
+    if (!in || !s_run || !startI2s(cfg)) {
+        if (s_run) LOGE(TAG, "I²S käivitamine ebaõnnestus");
         free(in);
         s_run = false;
         s_task = nullptr;
         vTaskDelete(nullptr);
         return;
     }
-    LOGI(TAG, "Mikrofon käivitatud: %d Hz, GPIO SCK=%d WS=%d SD=%d", MIC_RATE, MIC_SCK_PIN, MIC_WS_PIN, MIC_SD_PIN);
+    const int frameIn = cfg.rate * FRAME_MS / 1000;
+    const int dec = cfg.rate / MIC_RATE;      // 3, 2 või 1
+    s_chan = s_chanSetting == 2 ? s_autoChan : s_chanSetting;
+    LOGI(TAG, "Mikrofon käivitatud: %s, %s kanal, GPIO SCK=%d WS=%d SD=%d", cfg.name,
+         s_chan ? "parem" : "vasak", MIC_SCK_PIN, MIC_WS_PIN, MIC_SD_PIN);
 
     while (s_run) {
         size_t got = 0;
-        if (i2s_channel_read(s_rx, in, FRAME_IN * 2 * sizeof(int32_t), &got, 200) != ESP_OK || !got) continue;
-        const int frames = got / (2 * sizeof(int32_t));
+        if (i2s_channel_read(s_rx, in, frameIn * 8, &got, 200) != ESP_OK || !got) continue;
+        const int frames = got / 8;
 
-        // Mõlema kanali tase (dispersioon → dBFS 24-bit skaalal)
-        for (int i = 0; i < frames; i++)
-            for (int c = 0; c < 2; c++) {
-                double v = in[2 * i + c] >> 8;
-                cs[c] += v; cq[c] += v * v;
-            }
-        cn += frames;
-        if (cn >= I2S_RATE / 2) {
-            for (int c = 0; c < 2; c++) {
-                double m = cs[c] / cn, var = cq[c] / cn - m * m;
-                s_chanDb[c] = var > 1 ? 10 * log10(var) - 20 * log10(8388608.0) : -120;
-                cs[c] = cq[c] = 0;
-            }
-            cn = 0;
-            if (!reported) {
-                reported = true;
-                LOGI(TAG, "Kanalite tase: vasak %.0f dBFS, parem %.0f dBFS – kasutan %s kanalit",
-                     s_chanDb[0], s_chanDb[1], s_chan ? "paremat" : "vasakut");
-                if (s_chanDb[s_chan] < -110)
-                    LOGW(TAG, "Valitud kanalis pole signaali – proovi seadetes teist kanalit");
-            }
+        // Mõlema kanali tase (diagnostika seadetes)
+        statAdd(cst, in, frames);
+        if (cst[0].n >= cfg.rate / 2) {
+            s_chanDb[0] = statDb(cst[0]);
+            s_chanDb[1] = statDb(cst[1]);
+            cst[0] = ChStat(); cst[1] = ChStat();
         }
 
         const float g = s_gain / 256.0f;      // 24 → 16 bitti × võimendus
         const int ch = s_chan;
         int n = 0;
-        for (int i = 0; i + 1 < frames && n < FRAME_OUT; i += 2) {
-            float x = ((in[2 * i + ch] >> 8) + (in[2 * (i + 1) + ch] >> 8)) * 0.5f;
+        for (int i = 0; i + dec <= frames && n < FRAME_OUT; i += dec) {
+            float x = 0;
+            for (int k = 0; k < dec; k++) x += in[2 * (i + k) + ch] >> 8;
+            x /= dec;
             float y = x - dcX + 0.996f * dcY;  // 1. järku kõrgpääs
             dcX = x; dcY = y;
             float v = y * g;
@@ -164,15 +225,17 @@ static void task(void *) {
 void apply() {
     const Settings::Data d = Settings::get();
     s_gain = powf(10.0f, d.micGain / 20.0f);
-    s_chan = d.micChan;
+    s_chanSetting = d.micChan;
+    if (s_task) s_chan = d.micChan == 2 ? s_autoChan : d.micChan;
     if (d.micEnabled && s_task && !s_run) {    // peatumine veel pooleli – oota
         for (int i = 0; i < 50 && s_task; i++) vTaskDelay(pdMS_TO_TICKS(10));
     }
     if (d.micEnabled && !s_task) {
+        s_cfg = -1;                            // iga sisselülitamine proovib seadistused läbi
         if (!s_ring) s_ring = (int16_t *)heap_caps_calloc(RING, sizeof(int16_t), MALLOC_CAP_SPIRAM);
         if (!s_ring) { LOGE(TAG, "Helipuhvrile ei jätkunud mälu"); return; }
         s_run = true;
-        if (xTaskCreatePinnedToCore(task, "mic", 4096, nullptr, 5, &s_task, 0) != pdPASS) {
+        if (xTaskCreatePinnedToCore(task, "mic", 6144, nullptr, 5, &s_task, 0) != pdPASS) {
             s_run = false;
             s_task = nullptr;
         }
@@ -190,6 +253,7 @@ bool running() { return s_task != nullptr && s_run; }
 uint32_t position() { return s_wpos; }
 int channel() { return s_chan; }
 float chanDb(int ch) { return s_chanDb[ch & 1]; }
+const char *config() { return s_cfg >= 0 ? CFGS[s_cfg].name : "proovin…"; }
 float levelDb() { return s_level; }
 float peakDb() { return s_peak; }
 

@@ -27,7 +27,7 @@ struct Data {
     bool micEnabled;          // mikrofon sees (vaikimisi väljas – privaatsus)
     int  micGain;             // mikrofoni võimendus dB (0…40)
     int  micCodec;            // 0 = G.711 µ-law 8 kHz, 1 = L16 16 kHz
-    int  micChan;             // I²S kanal: 0 = vasak (skeemi järgi L/R = GND), 1 = parem
+    int  micChan;             // I²S kanal: 0 = vasak, 1 = parem, 2 = automaatne (proovimisel leitud)
     bool rtspAudio;           // lisa helirada RTSP voogu        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 

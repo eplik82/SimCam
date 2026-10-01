@@ -88,8 +88,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.8.2
-git push origin v1.8.2
+git tag v1.8.3
+git push origin v1.8.3
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -210,7 +210,7 @@ samad viigud on LilyGO tehasetarkvaras). Mikrofon on vaikimisi **väljas**:
 | Võimendus | 0–40 dB (vaikimisi 24 dB). Vaikne heli → suurenda; tipp punane → vähenda |
 | Helikvaliteet | **G.711 µ-law 8 kHz** (64 kbit/s, soovitatav, toetavad kõik mängijad ja salvestid) või **L16 16 kHz** (256 kbit/s, selgem) |
 | Heli RTSP voos | lisab RTSP-sse helirajad (`track2`); rakendub uutele ühendustele |
-| Mikrofoni kanal | vasak (vaikimisi, skeemi järgi L/R = GND) või parem. Kaardil on mõlema kanali tase – õige on see, mille tase rääkides muutub; vale kanal annab ainult sahinat |
+| Mikrofoni kanal | **automaatne** (vaikimisi), vasak või parem. Kaardil on mõlema kanali tase – õige on see, mille tase rääkides muutub; vale kanal annab ainult sahinat |
 
 * **Brauseris:** avalehel 🔈/🔊 nupp (heli algab alles vajutusel – brauserid ei luba
   heli automaatselt), pildi all helitaseme riba; viivitus ~0,2–0,4 s. Seadete lehel
@@ -218,7 +218,12 @@ samad viigud on LilyGO tehasetarkvaras). Mikrofon on vaikimisi **väljas**:
 * **RTSP:** sama URL (`rtsp://admin:<parool>@<IP>:554/live`) – VLC/ffplay mängivad
   pilti ja heli koos. Pilt ja heli seotakse ühisele ajateljele RTCP Sender Reportiga
   (iga 5 s). Aeglases võrgus jäetakse üle 0,4 s maha jäänud heli vahele.
-* Heli töödeldakse: 32 kHz I²S → 16 kHz, alalisvoolu eemaldus, võimendus.
+* Mikrofoni sisselülitamisel proovib seade ~2,5 s jooksul läbi I²S taktid (48/32/16 kHz →
+  BCLK 3,07/2,05/1,02 MHz) ja vormingud (Philips/MSB) ning valib selle, kus üks kanal
+  annab tüüpilist mikrofoni signaali (−100…−20 dBFS) ja teine on vaikne (andmeliinil on
+  10 kΩ maandustakisti). Tulemused on logis (`MIC`, „Proov …"); uuesti proovimiseks
+  lülita mikrofon välja ja sisse.
+* Heli töödeldakse: I²S → 16 kHz (keskmistamine), alalisvoolu eemaldus, võimendus.
 * Heli salvestamisel arvesta teiste inimeste privaatsusega.
 
 ## Aku
@@ -365,7 +370,7 @@ Sierra Wireless *AirPrime MC7304 Product Technical Specification*,
 | Seade taaskäivitub ise | ⚙ → 📄 Logi → „Eelmine käivitus": põhjus ja viimased read enne taaskäivitust |
 | Heli ei kõla / helitase ~ −90 dBFS | mikrofon seadetes väljas või logis „Mikrofon ei anna signaali" |
 | Heli moonutab | vähenda võimendust (tipp ei tohi olla punane) |
-| Heli asemel ainult sahin | vale kanal – ⚙ → 🎤 Mikrofon → „Mikrofoni kanal" (vt kanalite taset) |
+| Heli asemel ainult sahin | vaata logist `MIC` „Proov …" ridu; mõlemas kanalis ~−5 dBFS = mikrofon ei tööta selle seadistusega |
 | Brownout LTE ühendumisel | modem tarbib kuni 2 A tippe – kasuta korralikku 5 V toidet |
 
 ## Projekti struktuur

@@ -35,7 +35,7 @@ static void defaults(Data &d) {
     d.micEnabled = false;
     d.micGain = 24;
     d.micCodec = 0;
-    d.micChan = 0;
+    d.micChan = 2;
     d.rtspAudio = true;
 }
 
@@ -77,7 +77,7 @@ void load() {
         d.micEnabled = p.getBool("mic_en", d.micEnabled);
         d.micGain = constrain(p.getInt("mic_gain", d.micGain), 0, 40);
         d.micCodec = p.getInt("mic_codec", d.micCodec) == 1 ? 1 : 0;
-        d.micChan = p.getInt("mic_chan", d.micChan) == 1 ? 1 : 0;
+        d.micChan = constrain(p.getInt("mic_chan2", d.micChan), 0, 2);   // uus võti: vaikimisi automaatne
         d.rtspAudio = p.getBool("rtsp_audio", d.rtspAudio);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
@@ -138,7 +138,7 @@ bool save(const Data &din) {
     p.putBool("mic_en", d.micEnabled);
     p.putInt("mic_gain", d.micGain);
     p.putInt("mic_codec", d.micCodec);
-    p.putInt("mic_chan", d.micChan);
+    p.putInt("mic_chan2", d.micChan);
     p.putBool("rtsp_audio", d.rtspAudio);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
