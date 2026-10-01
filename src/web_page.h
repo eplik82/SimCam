@@ -3,6 +3,7 @@
 //   INDEX_HTML    – vaade: ainult kaamerapilt + nupud
 //   SETTINGS_HTML – olek, WiFi/LTE seaded, parool, taaskäivitus
 //   LOG_HTML      – seadme logi (jooksev + eelmine käivitus)
+//   AUDIO_JS      – brauseri helimängija (/audio.js)
 //   LOGIN_HTML    – sisselogimine
 //   COMMON_CSS    – ühine stiil (/style.css)
 // =============================================================================
@@ -47,6 +48,8 @@ body{display:flex;flex-direction:column;color:#fff}
 .info b{color:#e8ebf1;font-weight:600}
 .info .warn{color:#f0b429}
 .info .low{color:#ff6b6b;font-weight:600}
+.mbar{display:inline-block;width:46px;height:7px;background:#2a303b;border-radius:4px;overflow:hidden;vertical-align:1px;margin-left:4px}
+.mbar>i{display:block;height:100%;background:#2fbf71;transition:width .3s}
 .rot{display:inline-flex;border:1px solid #2a303b;border-radius:10px;overflow:hidden}
 .bar .rot button{border:0;border-radius:0;min-width:48px;padding:10px 10px;border-right:1px solid #2a303b}
 .bar .rot button:last-child{border-right:0}
@@ -57,14 +60,16 @@ body{display:flex;flex-direction:column;color:#fff}
   <span class="msg" id="msg">Ühendan…</span>
   <a class="gear" href="/settings" title="Seaded">⚙</a>
 </div>
-<div class="info" id="info"><span id="iBat" style="display:none"></span><span id="iStat">Ühendan…</span><span class="warn" id="iWarn" style="display:none">⚠ 90°/270° pööre vähendab kaadrisagedust (~3–4 fps)</span></div>
+<div class="info" id="info"><span id="iBat" style="display:none"></span><span id="iMic" style="display:none"></span><span id="iStat">Ühendan…</span><span class="warn" id="iWarn" style="display:none">⚠ 90°/270° pööre vähendab kaadrisagedust (~3–4 fps)</span></div>
 <div class="bar">
   <button id="bPlay" title="Peata / jätka vaade">⏸<span class="lbl">Peata</span></button>
   <span class="rot" title="Pildi pööre"><button data-r="0">0°</button><button data-r="90">90°</button><button data-r="180">180°</button><button data-r="270">270°</button></span>
   <button id="bFocus" title="Autofookus">◎<span class="lbl">Fookus</span></button>
   <button id="bSnap" title="Hetktõmmis">📷<span class="lbl">Hetktõmmis</span></button>
+  <button id="bAudio" title="Heli sisse / välja" style="display:none">🔈<span class="lbl">Heli</span></button>
 </div>
 <div class="toast" id="toast"></div>
+<script src="/audio.js"></script>
 <script>
 const $=id=>document.getElementById(id);let playing=false,rot=0;
 const vid=Math.random().toString(36).slice(2,12);
@@ -86,6 +91,9 @@ async function stats(){
  else try{const d=await (await api('/api/view?id='+vid,{cache:'no-store'})).json();
   if(d.rotate!==rot){rot=d.rotate;showRot()}
   const b=d.bat,ib=$('iBat');ib.style.display=b&&b.enabled&&b.state!='ABSENT'?'':'none';
+  const mc=d.mic,im=$('iMic');$('bAudio').style.display=mc&&mc.on?'':'none';im.style.display=mc&&mc.on&&SimAudio.active()?'':'none';
+  if(mc&&mc.on){const lv=Math.max(0,Math.min(100,(mc.level+70)/70*100));im.innerHTML=`🎤<span class="mbar"><i style="width:${lv.toFixed(0)}%"></i></span>`}
+  else if(SimAudio.active())SimAudio.stop();
   if(b&&b.enabled){ib.className=b.state=='LOW'?'low':'';ib.title='Aku '+b.v.toFixed(2)+' V';
    ib.textContent=(b.state=='CHARGING'?'⚡':b.state=='LOW'?'🪫':'🔋')+' '+b.pct+' %'}
   if(d.fps<0)$('iStat').textContent='Ühendan…';
@@ -97,6 +105,9 @@ $('bFocus').onclick=async()=>{const b=$('bFocus');b.disabled=true;
  setTimeout(()=>b.disabled=false,1500)};
 $('bSnap').onclick=()=>{const a=document.createElement('a');const t=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
  a.href='/capture?'+Date.now();a.download='simcam-'+t+'.jpg';document.body.appendChild(a);a.click();a.remove();toast('Hetktõmmis salvestatud')};
+SimAudio.onstate=on=>{const b=$('bAudio');b.classList.toggle('on',on);b.firstChild.textContent=on?'🔊':'🔈'};
+SimAudio.onerror=m=>toast('Heli: '+m);
+$('bAudio').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
 api('/api/cam').then(r=>r.json()).then(c=>{rot=c.rotate||0;showRot()}).catch(()=>{});
 setPlay(true);stats();
 </script></body></html>)HTML";
@@ -160,6 +171,10 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0}
 .rng{display:flex;gap:4px;justify-content:flex-end}.rng button{padding:3px 9px;font-size:12px}
 .rng button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 details summary{cursor:pointer;color:var(--mut);font-size:13px;margin-top:8px}
+input[type=range]{width:100%;accent-color:var(--acc)}
+select.sel{width:100%;min-width:0;max-width:100%;font:inherit;font-size:15px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+.lvl{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.lvl>div{height:100%;width:0;background:var(--ok);transition:width .2s}
+.lvl.hot>div{background:var(--bad)}
 details form{margin-top:8px}
 </style></head><body>
 <header><a class="btn" href="/">← Vaade</a><h1>Seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
@@ -276,6 +291,23 @@ details form{margin-top:8px}
   </form>
  </section>
 
+ <section class="card"><h2>🎤 Mikrofon</h2>
+  <form id="fMic">
+   <label class="chk"><input type="checkbox" id="f_mic_en"> Mikrofon sees</label>
+   <div id="micOn">
+    <div class="row"><span>Helitase</span><span id="m_lvl_t">-</span></div>
+    <div class="lvl" id="m_lvl"><div id="m_lvl_b"></div></div>
+    <div class="row" style="margin-top:6px"><span>Võimendus</span><span id="m_gain_t">24 dB</span></div>
+    <input type="range" id="f_mic_gain" min="0" max="40" step="2" value="24" aria-label="Võimendus">
+    <label style="margin-top:8px">Helikvaliteet
+     <select class="sel" id="f_mic_codec"><option value="0">G.711 8 kHz, 64 kbit/s (soovitatav)</option><option value="1">L16 16 kHz, 256 kbit/s (selgem)</option></select></label>
+    <label class="chk" style="margin-top:8px"><input type="checkbox" id="f_rtsp_audio"> Heli RTSP voos</label>
+    <div class="btns" style="margin-top:8px"><button type="button" id="bListen">🔈 Kuula</button><button class="pri" type="submit">Salvesta</button></div>
+   </div>
+   <div class="note">Mikrofon on vaikimisi väljas. Heli salvestamisel arvesta teiste inimeste privaatsusega. Kodeki muutus rakendub uutele RTSP ühendustele.</div>
+  </form>
+ </section>
+
  <section class="card"><h2>Püsivara</h2>
   <div class="row"><span>Praegune</span><span id="o_cur">-</span></div>
   <div class="row"><span>Viimane GitHubis</span><span id="o_lat">-</span></div>
@@ -288,6 +320,7 @@ details form{margin-top:8px}
 </div>
 </main>
 <div class="toast" id="toast"></div>
+<script src="/audio.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),3000)}
@@ -304,6 +337,8 @@ async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-s
  $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;
  $('f_pin').placeholder=c.has_pin?'(salvestatud)':'(puudub)';$('f_pin_clear').checked=false;
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
+ $('f_mic_en').checked=c.mic_en;$('f_mic_gain').value=c.mic_gain;$('m_gain_t').textContent=c.mic_gain+' dB';
+ $('f_mic_codec').value=c.mic_codec;$('f_rtsp_audio').checked=c.rtsp_audio;$('micOn').style.display=c.mic_en?'':'none';
  $('defpass').style.display=c.default_pass?'block':'none'}catch(e){}}
 function showRtsp(){$('rtsp').textContent=rtspAuth?`rtsp://admin:<parool>@${location.hostname}:554/live`:`rtsp://${location.hostname}:554/live`}
 $('bCopy').onclick=()=>{const t=$('rtsp').textContent;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Kopeeritud'),()=>toast(t))};
@@ -340,6 +375,16 @@ $('fSim').onsubmit=async e=>{e.preventDefault();const o=$('s_old').value.trim(),
  if(!confirm('Muuta SIM-kaardi PIN?'))return;toast('Muudan SIM PIN-i…');
  try{const d=await (await api('/api/simpin',form({old:o,new:n}))).json();
   toast(d.ok?'SIM PIN muudetud':('Ebaõnnestus: '+(d.error||'')));if(d.ok){['s_old','s_new','s_new2'].forEach(i=>$(i).value='')}}catch(e){}};
+$('f_mic_gain').oninput=()=>$('m_gain_t').textContent=$('f_mic_gain').value+' dB';
+$('f_mic_en').onchange=()=>{const on=$('f_mic_en').checked;$('micOn').style.display=on?'':'none';if(!on)SimAudio.stop();
+ save({mic_en:on?1:0},on?'Mikrofon sees':'Mikrofon väljas')};
+$('fMic').onsubmit=e=>{e.preventDefault();SimAudio.stop();
+ save({mic_gain:$('f_mic_gain').value,mic_codec:$('f_mic_codec').value,rtsp_audio:$('f_rtsp_audio').checked?1:0},'Mikrofoni seaded salvestatud')};
+SimAudio.onstate=on=>{$('bListen').textContent=on?'⏹ Lõpeta':'🔈 Kuula'};SimAudio.onerror=m=>toast('Heli: '+m);
+$('bListen').onclick=()=>SimAudio.active()?SimAudio.stop():SimAudio.start();
+function showMic(m){if(!m)return;const pct=m.running?Math.max(0,Math.min(100,(m.level+70)/70*100)):0;
+ $('m_lvl_b').style.width=pct+'%';$('m_lvl').classList.toggle('hot',m.peak>-3);
+ $('m_lvl_t').textContent=m.running?`${m.level.toFixed(0)} dBFS (tipp ${m.peak.toFixed(0)})`:(m.enabled?'käivitub…':'-')}
 $('bReboot').onclick=async()=>{if(!confirm('Kas taaskäivitada seade?'))return;try{await api('/api/reboot',{method:'POST'})}catch(e){}toast('Taaskäivitan…')};
 const OST={idle:'-',checking:'Kontrollin…',uptodate:'Ajakohane ✓',available:'Uuendus saadaval!',updating:'Uuendan…',done:'Paigaldatud – taaskäivitub',error:'Viga'};
 async function otaPoll(){try{const o=await (await api('/api/ota',{cache:'no-store'})).json();
@@ -375,7 +420,7 @@ async function poll(){
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
   $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;
-  showBat(d.bat);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
+  showBat(d.bat);showMic(d.mic);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
  }catch(e){if(e!==0)$('hdr').innerHTML='<span class="dot bad"></span>Seade ei vasta'}
  setTimeout(poll,3000)}
 const BST={MEASURING:'Mõõdan…',ABSENT:'Aku puudub',CHARGING:'⚡ Laeb',FULL:'✓ Täis / laadijal',DISCHARGING:'Tühjeneb',LOW:'⚠ Madal – laadi!',STABLE:'Stabiilne'};
@@ -511,3 +556,30 @@ $('bClr').onclick=async()=>{if(!confirm('Tühjendada jooksev logi?'))return;
  try{await api('/api/log/clear',{method:'POST'});lines=[];$('log').textContent='';toast('Logi tühjendatud');load()}catch(e){}};
 load();
 </script></body></html>)HTML";
+
+// -----------------------------------------------------------------------------
+//  Helimängija (/audio.js) – loeb /audio voogu fetch-iga ja mängib Web Audio-ga
+//  ~0,15–0,3 s viivitusega. SimAudio.start()/stop(); onstate(bool) tagasiside.
+// -----------------------------------------------------------------------------
+static const char AUDIO_JS[] PROGMEM = R"JS(
+window.SimAudio=(()=>{let ctx=null,ctl=null,next=0,on=false;const A={onstate:null,onerror:null};
+const UL=new Float32Array(256);for(let i=0;i<256;i++){const u=~i&255,e=(u>>4)&7,m=u&15;let x=(((m<<3)+0x84)<<e)-0x84;UL[i]=(u&0x80?-x:x)/32768}
+function play(f,rate){if(!f.length)return;const b=ctx.createBuffer(1,f.length,rate);b.copyToChannel(f,0);
+ const s=ctx.createBufferSource();s.buffer=b;s.connect(ctx.destination);const now=ctx.currentTime;
+ if(next<now+0.04||next>now+0.6)next=now+0.15;s.start(next);next+=b.duration}
+function set(v){on=v;A.onstate&&A.onstate(v)}
+A.start=async()=>{if(on)return;try{ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();await ctx.resume();
+ ctl=new AbortController();set(true);next=0;
+ const r=await fetch('/audio',{signal:ctl.signal,cache:'no-store'});
+ if(r.status==401){location.href='/login';return}
+ if(!r.ok)throw new Error(await r.text()||('HTTP '+r.status));
+ const l16=r.headers.get('X-Audio-Format')=='s16le',rate=+r.headers.get('X-Audio-Rate')||8000,rd=r.body.getReader();let carry=null;
+ for(;;){const {value,done}=await rd.read();if(done)break;let b=value;
+  if(l16){if(carry){const t=new Uint8Array(carry.length+b.length);t.set(carry);t.set(b,carry.length);b=t;carry=null}
+   if(b.length&1){carry=b.slice(-1);b=b.slice(0,-1)}const dv=new DataView(b.buffer,b.byteOffset,b.length),f=new Float32Array(b.length/2);
+   for(let i=0;i<f.length;i++)f[i]=dv.getInt16(2*i,true)/32768;play(f,rate)}
+  else{const f=new Float32Array(b.length);for(let i=0;i<b.length;i++)f[i]=UL[b[i]];play(f,rate)}}
+ if(on)throw new Error('Heli voog katkes')}catch(e){if(on&&e.name!=='AbortError')A.onerror&&A.onerror(e.message||String(e))}
+ finally{if(ctl)ctl.abort();ctl=null;set(false)}};
+A.stop=()=>{if(ctl)ctl.abort();set(false)};A.active=()=>on;return A})();
+)JS";

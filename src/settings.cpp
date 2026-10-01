@@ -31,6 +31,10 @@ static void defaults(Data &d) {
     d.autoUpdate = false;
     d.batEnabled = true;
     d.batCal = 1.0f;
+    d.micEnabled = false;
+    d.micGain = 24;
+    d.micCodec = 0;
+    d.rtspAudio = true;
 }
 
 bool applyFailsafe(Data &d) {
@@ -65,6 +69,10 @@ void load() {
         d.batEnabled = p.getBool("bat_en", d.batEnabled);
         d.batCal = p.getFloat("bat_cal", d.batCal);
         if (!(d.batCal > 0.8f && d.batCal < 1.25f)) d.batCal = 1.0f;
+        d.micEnabled = p.getBool("mic_en", d.micEnabled);
+        d.micGain = constrain(p.getInt("mic_gain", d.micGain), 0, 40);
+        d.micCodec = p.getInt("mic_codec", d.micCodec) == 1 ? 1 : 0;
+        d.rtspAudio = p.getBool("rtsp_audio", d.rtspAudio);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
     }
@@ -100,6 +108,7 @@ bool save(const Data &din) {
     if (d.rotation % 90 != 0 || d.rotation < 0 || d.rotation > 270) return false;
     if (strlen(d.webPass) < 4) return false;
     if (!(d.batCal > 0.8f && d.batCal < 1.25f)) return false;
+    if (d.micGain < 0 || d.micGain > 40 || (d.micCodec != 0 && d.micCodec != 1)) return false;
     for (const char *c = d.simPin; *c; c++) if (*c < '0' || *c > '9') return false;   // PIN = numbrid
     Preferences p;
     if (!p.begin(NS, false)) return false;
@@ -119,6 +128,10 @@ bool save(const Data &din) {
     p.putBool("auto_upd", d.autoUpdate);
     p.putBool("bat_en", d.batEnabled);
     p.putFloat("bat_cal", d.batCal);
+    p.putBool("mic_en", d.micEnabled);
+    p.putInt("mic_gain", d.micGain);
+    p.putInt("mic_codec", d.micCodec);
+    p.putBool("rtsp_audio", d.rtspAudio);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_d = d;

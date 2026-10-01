@@ -1,5 +1,6 @@
 // =============================================================================
-//  RTSP server (port 554) – MJPEG üle RTP (RFC 2326 + RFC 2435)
+//  RTSP server (port 554) – MJPEG üle RTP (RFC 2326 + RFC 2435) + heli
+//  (mikrofoni sisselülitamisel: G.711 µ-law 8 kHz või L16 16 kHz, track2)
 // =============================================================================
 //  URL:  rtsp://<IP>:554/live
 //  Transport: RTP/AVP (UDP) ja RTP/AVP/TCP (interleaved).

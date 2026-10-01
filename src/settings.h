@@ -22,7 +22,11 @@ struct Data {
     bool rtspAuth;            // kas RTSP nõuab parooli
     bool autoUpdate;          // paigalda GitHubi uuendused automaatselt
     bool batEnabled;          // aku on ühendatud (näita olekut veebiliideses)
-    float batCal;             // aku pinge kalibreerimistegur (1.0 = ilma parandita)        // juhuslik sool sessiooniküpsise jaoks (hex)
+    float batCal;             // aku pinge kalibreerimistegur (1.0 = ilma parandita)
+    bool micEnabled;          // mikrofon sees (vaikimisi väljas – privaatsus)
+    int  micGain;             // mikrofoni võimendus dB (0…40)
+    int  micCodec;            // 0 = G.711 µ-law 8 kHz, 1 = L16 16 kHz
+    bool rtspAudio;           // lisa helirada RTSP voogu        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 
 void load();                  // loe NVS-ist (puuduvad väärtused = config.h vaikeväärtused)

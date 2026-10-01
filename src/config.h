@@ -84,6 +84,13 @@
 #define BAT_ADC_PIN          3    // BAT_ADC → ESP32-S3 GPIO3 (ADC1_CH2)
 #define BAT_DIVIDER          2.0f // aku pinge = ADC pinge × 2
 
+// Mikrofon MSM261S4030H0R (I²S MEMS, skeem T_SIMCAM-V1.3 U3, L/R = GND → vasak kanal)
+#define MIC_SCK_PIN          41   // I2S_SCK (BCLK)
+#define MIC_WS_PIN           42   // I2S_WS (LRCLK)
+#define MIC_SD_PIN           2    // I2S_SDO (mikrofoni andmed → ESP32)
+#define MIC_RATE             16000 // Hz – sisemine diskreetimissagedus
+#define AUDIO_HTTP_MAX       2    // samaaegsed brauseri helivood (/audio)
+
 // -----------------------------------------------------------------------------
 //  Modemi UART / PPP
 // -----------------------------------------------------------------------------

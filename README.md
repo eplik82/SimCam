@@ -10,6 +10,7 @@ release'ist (FOTA)**.
 | Veebiliides   | `http://<IP>/` (hotspotis `http://4.3.2.1/`, WiFi-s ka `http://simcam.local/`) |
 | RTSP (MJPEG)  | `rtsp://admin:<parool>@<IP>:554/live`     |
 | MJPEG voog    | `http://<IP>/stream`                       |
+| Heli (brauser)| `http://<IP>/audio` (mikrofoni sisselülitamisel) |
 | Hetktõmmis    | `http://<IP>/capture`                      |
 | Olek (JSON)   | `http://<IP>/api/status`                   |
 | Logi          | `http://<IP>/log` (tekstina `http://<IP>/api/log`) |
@@ -41,6 +42,8 @@ release'ist (FOTA)**.
   ise sisse (ja pärast ühenduse taastumist välja).
 * **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel või soovi korral
   automaatselt; eelmine versioon taastatakse, kui uus ei käivitu.
+* **Mikrofon** (MSM261S4030H0R, I²S): heli RTSP voos (G.711 8 kHz või L16 16 kHz)
+  ja brauseris (🔊), helitaseme näit, võimendus – vaikimisi **väljas**, vt [Mikrofon](#mikrofon).
 * **Aku** (TP4056 laadija plaadil): täituvus %, pinge, olek (laeb / tühjeneb /
   täis), hinnanguline tööaeg ja 24 h pingegraafik – vt [Aku](#aku).
 * **Logi veebiliideses** (⚙ → 📄 Logi): seadme logi reaalajas, filtreerimine
@@ -84,8 +87,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.5.3
-git push origin v1.5.3
+git tag v1.6.0
+git push origin v1.6.0
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -184,6 +187,29 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
 * `GET /api/cam?var=<nimi>&val=<väärtus>` – nt `rotate`, `aec`, `aec_value`,
   `agc_gain`, `brightness`, `hmirror`, `vflip`, `framesize`, `quality`, `ir`.
   Ilma parameetriteta tagastab kõik seaded.
+
+## Mikrofon
+
+Plaadil on digitaalne MEMS-mikrofon **MSM261S4030H0R** (skeem `T_SIMCAM-V1.3`,
+U3; I²S: SCK = GPIO41, WS = GPIO42, andmed = GPIO2, L/R = GND → vasak kanal –
+samad viigud on LilyGO tehasetarkvaras). Mikrofon on vaikimisi **väljas**:
+⚙ → **🎤 Mikrofon** → „Mikrofon sees".
+
+| Seade | Tähendus |
+|---|---|
+| Helitase | RMS ja tipp (dBFS) viimase 0,2 s jooksul; punane = tipp üle −3 dBFS (moonutab) |
+| Võimendus | 0–40 dB (vaikimisi 24 dB). Vaikne heli → suurenda; tipp punane → vähenda |
+| Helikvaliteet | **G.711 µ-law 8 kHz** (64 kbit/s, soovitatav, toetavad kõik mängijad ja salvestid) või **L16 16 kHz** (256 kbit/s, selgem) |
+| Heli RTSP voos | lisab RTSP-sse helirajad (`track2`); rakendub uutele ühendustele |
+
+* **Brauseris:** avalehel 🔈/🔊 nupp (heli algab alles vajutusel – brauserid ei luba
+  heli automaatselt), pildi all helitaseme riba; viivitus ~0,2–0,4 s. Seadete lehel
+  „🔈 Kuula" mikrofoni testimiseks. Samaaegselt kuni 2 kuulajat.
+* **RTSP:** sama URL (`rtsp://admin:<parool>@<IP>:554/live`) – VLC/ffplay mängivad
+  pilti ja heli koos. Pilt ja heli seotakse ühisele ajateljele RTCP Sender Reportiga
+  (iga 5 s). Aeglases võrgus jäetakse üle 0,4 s maha jäänud heli vahele.
+* Heli töödeldakse: 32 kHz I²S → 16 kHz, alalisvoolu eemaldus, võimendus.
+* Heli salvestamisel arvesta teiste inimeste privaatsusega.
 
 ## Aku
 
@@ -327,6 +353,8 @@ Sierra Wireless *AirPrime MC7304 Product Technical Specification*,
 | LTE IP pole see, mida ootasid | APN vale või staatilise IP teenus pole SIM-ile aktiveeritud |
 | FOTA: „GitHubiga ei saanud ühendust" | seadmel pole internetti (ainult hotspot ei piisa) |
 | Seade taaskäivitub ise | ⚙ → 📄 Logi → „Eelmine käivitus": põhjus ja viimased read enne taaskäivitust |
+| Heli ei kõla / helitase ~ −90 dBFS | mikrofon seadetes väljas või logis „Mikrofon ei anna signaali" |
+| Heli moonutab | vähenda võimendust (tipp ei tohi olla punane) |
 | Brownout LTE ühendumisel | modem tarbib kuni 2 A tippe – kasuta korralikku 5 V toidet |
 
 ## Projekti struktuur
@@ -349,6 +377,7 @@ SimCam/
     ├── modem_lte.*           LTE: PWRKEY, PIN, APN, PPP/CMUX, taastamine
     ├── ota.*                 FOTA GitHubi release'ist + tagasipööramine
     ├── battery.*             aku pinge (GPIO3), täituvus, olek, ajalugu
+    ├── audio.*               mikrofon (I²S), heli ringpuhver, G.711 kodeerija
     ├── settings.*            NVS seaded
     ├── auth.*                parool, sessiooniküpsis, HTTP Basic
     └── log.*                 logi: USB Serial + mälupuhver (/log) + eelmise käivituse logi (RTC)

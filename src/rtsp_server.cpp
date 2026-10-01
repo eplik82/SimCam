@@ -6,12 +6,17 @@
 //       GET_PARAMETER) ja ignoreerib kliendi RTCP-d (TCP interleaved '$')
 //    2) PLAY olekus: võtab uusima JPEG-i, parsib selle ja saadab RTP/JPEG
 //       pakettidena (RFC 2435, Q=255 dünaamilised kvantimistabelid).
+//    3) Kui mikrofon on sees: helirada (track2) – G.711 µ-law 8 kHz (PT 0)
+//       või L16 16 kHz (PT 97), 20 ms paketid. Mõlemale rajale saadetakse
+//       iga 5 s järel RTCP Sender Report, et mängija saaks pildi ja heli
+//       ühisele ajateljele panna (mõlema RTP aeg tuleb millis()-ist).
 // =============================================================================
 #include "rtsp_server.h"
 #include "camera_handler.h"
 #include "config.h"
 #include "auth.h"
 #include "settings.h"
+#include "audio.h"
 #include "log.h"
 
 #include <Arduino.h>
@@ -101,24 +106,40 @@ static bool parseJpeg(const uint8_t *d, size_t n, JpegInfo &j) {
 // =============================================================================
 //  Kliendi sessioon
 // =============================================================================
-struct Session {
-    int      sock = -1;
-    int      udp = -1;
-    sockaddr_in peer = {};
-    bool     tcp = false;
-    uint8_t  chRtp = 0, chRtcp = 1;
-    uint16_t cliRtp = 0, cliRtcp = 0, srvRtp = 0;
-    bool     playing = false;
-    bool     setupDone = false;
-    uint32_t sessionId = 0;
+struct Track {
+    bool     setup = false;
+    uint8_t  chRtp = 0, chRtcp = 1;          // TCP interleaved kanalid
+    uint16_t cliRtp = 0, cliRtcp = 0;        // UDP kliendi pordid
     uint16_t seq = 0;
     uint32_t ssrc = 0;
+    uint32_t pkts = 0, octets = 0;           // RTCP SR jaoks
+};
+
+#define AUDIO_PKT_SAMPLES  (MIC_RATE / 50)   // 20 ms 16 kHz diskreete
+#define AUDIO_MAX_LAG_MS   400               // rohkem maha jäänud heli jäetakse vahele
+
+struct Session {
+    int      sock = -1;
+    int      udp = -1;                        // üks UDP sokkel mõlemale rajale
+    sockaddr_in peer = {};
+    bool     tcp = false;
+    uint16_t srvRtp = 0;
+    Track    v, a;                            // pilt (track1), heli (track2)
+    bool     audio = false;                   // heli pakuti SDP-s
+    uint8_t  aCodec = 0;                      // 0 = PCMU 8 kHz, 1 = L16 16 kHz
+    uint32_t aPos = 0, aTs = 0;               // heli lugemiskoht ja järgmise paketi RTP aeg
+    uint32_t lastSr = 0;
+    bool     playing = false;
+    uint32_t sessionId = 0;
     uint32_t lastActivity = 0;
     char     rx[2048];
     size_t   rxLen = 0;
     uint8_t  pkt[4 + 12 + 8 + 4 + 4 + 128 + RTSP_RTP_MAX_PAYLOAD];
+    uint8_t  apkt[4 + 12 + AUDIO_PKT_SAMPLES * 2];
     bool     warnedFormat = false;
 };
+
+static inline void put32(uint8_t *p, uint32_t v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
 
 static bool sendAll(int sock, const void *data, size_t len) {
     const uint8_t *p = (const uint8_t *)data;
@@ -134,25 +155,76 @@ static bool sendAll(int sock, const void *data, size_t len) {
     return true;
 }
 
-// Saada üks RTP pakett (hdr+payload on juba s.pkt-s alates offsetist 4)
-static bool sendRtp(Session &s, size_t rtpLen) {
+// Saada üks RTP/RTCP pakett (andmed on f-is alates offsetist 4; esimesed 4 baiti
+// on TCP interleaved päise jaoks)
+static bool sendPkt(Session &s, uint8_t ch, uint16_t port, uint8_t *f, size_t rtpLen) {
     if (s.tcp) {
-        uint8_t *f = s.pkt;                                   // '$' ch len16
-        f[0] = '$';
-        f[1] = s.chRtp;
+        f[0] = '$';                                           // '$' ch len16
+        f[1] = ch;
         f[2] = rtpLen >> 8;
         f[3] = rtpLen & 0xFF;
         return sendAll(s.sock, f, rtpLen + 4);
     }
     sockaddr_in to = s.peer;
-    to.sin_port = htons(s.cliRtp);
+    to.sin_port = htons(port);
     for (int tries = 0; tries < 50; tries++) {
-        int n = sendto(s.udp, s.pkt + 4, rtpLen, 0, (sockaddr *)&to, sizeof(to));
+        int n = sendto(s.udp, f + 4, rtpLen, 0, (sockaddr *)&to, sizeof(to));
         if (n == (int)rtpLen) return true;
         if (errno != ENOMEM && errno != ENOBUFS && errno != EAGAIN) return false;
         vTaskDelay(pdMS_TO_TICKS(2));                         // lwIP puhvrid täis – oota
     }
     return true;   // UDP: kaotatud pakett pole fataalne
+}
+
+static bool sendRtp(Session &s, Track &t, uint8_t *f, size_t rtpLen) {
+    t.pkts++;
+    t.octets += rtpLen - 12;
+    return sendPkt(s, t.chRtp, t.cliRtp, f, rtpLen);
+}
+
+// RTCP Sender Report: seob raja RTP aja seinakellaga (NTP), et mängija saaks
+// pildi ja heli sünkroniseerida. Seinakellaks on millis() (ühine mõlemale rajale).
+static void sendSr(Session &s, Track &t, uint32_t rtpNow, uint32_t ms) {
+    uint8_t b[4 + 28];
+    uint8_t *r = b + 4;
+    r[0] = 0x80; r[1] = 200; r[2] = 0; r[3] = 6;              // V=2, PT=SR, length=6
+    put32(r + 4, t.ssrc);
+    put32(r + 8, 2208988800UL + ms / 1000);                   // NTP sekundid (1900-st)
+    put32(r + 12, (uint32_t)(((uint64_t)(ms % 1000) << 32) / 1000));
+    put32(r + 16, rtpNow);
+    put32(r + 20, t.pkts);
+    put32(r + 24, t.octets);
+    sendPkt(s, t.chRtcp, t.cliRtcp, b, 28);
+}
+
+static uint32_t audioRate(const Session &s) { return s.aCodec ? 16000 : 8000; }
+
+// Saada kogu saadaolev heli 20 ms pakettidena
+static bool sendAudio(Session &s) {
+    int16_t pcm[AUDIO_PKT_SAMPLES];
+    uint32_t skipped;
+    const uint32_t rate = audioRate(s);
+    while (Audio::read(&s.aPos, pcm, AUDIO_PKT_SAMPLES, AUDIO_MAX_LAG_MS, &skipped)) {
+        if (skipped) s.aTs += (uint64_t)skipped * rate / MIC_RATE;   // vahelejäetud aeg
+        uint8_t *rtp = s.apkt + 4;
+        uint8_t *p = rtp + 12;
+        size_t len;
+        if (s.aCodec) {                                       // L16: big-endian
+            for (int i = 0; i < AUDIO_PKT_SAMPLES; i++) { p[2 * i] = pcm[i] >> 8; p[2 * i + 1] = pcm[i] & 0xFF; }
+            len = AUDIO_PKT_SAMPLES * 2;
+        } else {
+            len = Audio::encodePcmu(pcm, AUDIO_PKT_SAMPLES, p);
+        }
+        rtp[0] = 0x80;
+        rtp[1] = s.aCodec ? 97 : 0;
+        rtp[2] = s.a.seq >> 8; rtp[3] = s.a.seq & 0xFF;
+        s.a.seq++;
+        put32(rtp + 4, s.aTs);
+        put32(rtp + 8, s.a.ssrc);
+        if (!sendRtp(s, s.a, s.apkt, 12 + len)) return false;
+        s.aTs += (uint64_t)AUDIO_PKT_SAMPLES * rate / MIC_RATE;
+    }
+    return true;
 }
 
 // Pakenda JPEG RFC 2435 järgi ja saada
@@ -213,13 +285,13 @@ static bool sendJpeg(Session &s, const Camera::Frame &fr) {
         // --- RTP päis (12 B)
         rtp[0] = 0x80;                                        // V=2
         rtp[1] = (last ? 0x80 : 0x00) | 26;                   // M-bitt + PT 26 (JPEG)
-        rtp[2] = s.seq >> 8;
-        rtp[3] = s.seq & 0xFF;
-        s.seq++;
-        rtp[4] = ts >> 24; rtp[5] = ts >> 16; rtp[6] = ts >> 8; rtp[7] = ts;
-        rtp[8] = s.ssrc >> 24; rtp[9] = s.ssrc >> 16; rtp[10] = s.ssrc >> 8; rtp[11] = s.ssrc;
+        rtp[2] = s.v.seq >> 8;
+        rtp[3] = s.v.seq & 0xFF;
+        s.v.seq++;
+        put32(rtp + 4, ts);
+        put32(rtp + 8, s.v.ssrc);
 
-        if (!sendRtp(s, hdr + chunk)) return false;
+        if (!sendRtp(s, s.v, s.pkt, hdr + chunk)) return false;
         off += chunk;
     }
     return true;
@@ -317,8 +389,11 @@ static bool handleRequest(Session &s, char *req) {
         getsockname(s.sock, (sockaddr *)&me, &ml);
         char ip[16];
         inet_ntoa_r(me.sin_addr, ip, sizeof(ip));
-        char sdp[400];
-        snprintf(sdp, sizeof(sdp),
+        const Settings::Data cfg = Settings::get();
+        s.audio = Audio::running() && cfg.rtspAudio;
+        s.aCodec = cfg.micCodec ? 1 : 0;
+        char sdp[640];
+        int sl = snprintf(sdp, sizeof(sdp),
                  "v=0\r\n"
                  "o=- %lu 1 IN IP4 %s\r\n"
                  "s=SimCam live\r\n"
@@ -331,6 +406,10 @@ static bool handleRequest(Session &s, char *req) {
                  "a=framerate:%d\r\n"
                  "a=control:track1\r\n",
                  (unsigned long)s.sessionId, ip, CAM_MAX_FPS);
+        if (s.audio)
+            snprintf(sdp + sl, sizeof(sdp) - sl, s.aCodec ?
+                     "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 L16/16000/1\r\na=control:track2\r\n" :
+                     "m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=control:track2\r\n");
         char extra[256];
         // Content-Base lõpeb '/'-ga, et track1 lahenduks /live/track1-ks
         const char *slash = url[strlen(url) - 1] == '/' ? "" : "/";
@@ -339,19 +418,22 @@ static bool handleRequest(Session &s, char *req) {
         reply(s, 200, "OK", cseq, extra, sdp);
     } else if (!strcmp(method, "SETUP")) {
         if (!pathOk) { reply(s, 404, "Not Found", cseq); return true; }
+        const bool isAudio = strstr(path, "track2") != nullptr;
+        if (isAudio && !s.audio) { reply(s, 404, "Not Found", cseq); return true; }
+        Track &t = isAudio ? s.a : s.v;
         char tr[160] = "";
         header(req, "Transport", tr, sizeof(tr));
         char extra[256];
         if (strstr(tr, "RTP/AVP/TCP")) {
             s.tcp = true;
-            int a = 0, b = 1;
+            int a = isAudio ? 2 : 0, b = a + 1;
             const char *il = strstr(tr, "interleaved=");
             if (il) sscanf(il, "interleaved=%d-%d", &a, &b);
-            s.chRtp = a; s.chRtcp = b;
+            t.chRtp = a; t.chRtcp = b;
             snprintf(extra, sizeof(extra),
                      "Transport: RTP/AVP/TCP;unicast;interleaved=%d-%d;ssrc=%08lX\r\n"
                      "Session: %08lX;timeout=%d\r\n",
-                     a, b, (unsigned long)s.ssrc, (unsigned long)s.sessionId, RTSP_SESSION_TIMEOUT);
+                     a, b, (unsigned long)t.ssrc, (unsigned long)s.sessionId, RTSP_SESSION_TIMEOUT);
         } else {
             const char *cp = strstr(tr, "client_port=");
             int a = 0, b = 0;
@@ -360,26 +442,50 @@ static bool handleRequest(Session &s, char *req) {
                 return true;
             }
             s.tcp = false;
-            s.cliRtp = a; s.cliRtcp = b ? b : a + 1;
+            t.cliRtp = a; t.cliRtcp = b ? b : a + 1;
             snprintf(extra, sizeof(extra),
                      "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=%d-%d;ssrc=%08lX\r\n"
                      "Session: %08lX;timeout=%d\r\n",
-                     s.cliRtp, s.cliRtcp, s.srvRtp, s.srvRtp + 1, (unsigned long)s.ssrc,
+                     t.cliRtp, t.cliRtcp, s.srvRtp, s.srvRtp + 1, (unsigned long)t.ssrc,
                      (unsigned long)s.sessionId, RTSP_SESSION_TIMEOUT);
         }
-        s.setupDone = true;
+        t.setup = true;
         reply(s, 200, "OK", cseq, extra);
     } else if (!strcmp(method, "PLAY")) {
-        if (!s.setupDone) { reply(s, 455, "Method Not Valid in This State", cseq); return true; }
-        char extra[256];
-        snprintf(extra, sizeof(extra),
-                 "Session: %08lX\r\nRange: npt=0.000-\r\nRTP-Info: url=%s;seq=%u;rtptime=%lu\r\n",
-                 (unsigned long)s.sessionId, url, s.seq, (unsigned long)(millis() * 90));
+        if (!s.v.setup && !s.a.setup) { reply(s, 455, "Method Not Valid in This State", cseq); return true; }
+        const uint32_t now = millis();
+        if (s.a.setup) {                                      // heli alates uusimast diskreedist
+            s.aPos = Audio::position();
+            s.aTs = (uint32_t)((uint64_t)Audio::msAt(s.aPos) * audioRate(s) / 1000);
+        }
+        // RTP-Info: iga raja URL, järjekorranumber ja RTP aeg
+        char base[160];
+        strlcpy(base, url, sizeof(base));
+        size_t bl = strlen(base);
+        if (bl && base[bl - 1] == '/') base[--bl] = 0;
+        char *tk = strstr(base, "/track");                    // mõni klient saadab PLAY raja URL-iga
+        if (tk) *tk = 0;
+        char info[400];
+        int il = 0;
+        if (s.v.setup)
+            il += snprintf(info + il, sizeof(info) - il, "url=%s/track1;seq=%u;rtptime=%lu",
+                           base, s.v.seq, (unsigned long)(now * 90));
+        if (s.a.setup)
+            il += snprintf(info + il, sizeof(info) - il, "%surl=%s/track2;seq=%u;rtptime=%lu",
+                           il ? "," : "", base, s.a.seq, (unsigned long)s.aTs);
+        char extra[512];
+        snprintf(extra, sizeof(extra), "Session: %08lX\r\nRange: npt=0.000-\r\nRTP-Info: %s\r\n",
+                 (unsigned long)s.sessionId, info);
         reply(s, 200, "OK", cseq, extra);
-        if (!s.playing) { s.playing = true; Camera::addConsumer(); }
-        LOGI(TAG, "Voog käivitatud (%s)", s.tcp ? "TCP" : "UDP");
+        if (!s.playing) {
+            s.playing = true;
+            if (s.v.setup) Camera::addConsumer();
+            s.lastSr = 0;
+        }
+        LOGI(TAG, "Voog käivitatud (%s%s%s)", s.tcp ? "TCP" : "UDP", s.v.setup ? ", pilt" : "",
+             s.a.setup ? (s.aCodec ? ", heli L16 16 kHz" : ", heli G.711 8 kHz") : "");
     } else if (!strcmp(method, "PAUSE")) {
-        if (s.playing) { s.playing = false; Camera::removeConsumer(); }
+        if (s.playing) { s.playing = false; if (s.v.setup) Camera::removeConsumer(); }
         char extra[48];
         snprintf(extra, sizeof(extra), "Session: %08lX\r\n", (unsigned long)s.sessionId);
         reply(s, 200, "OK", cseq, extra);
@@ -469,13 +575,25 @@ static void clientTask(void *arg) {
         }
 
         // 3) Uus kaader → saada
-        if (s->playing && Camera::waitFrame(fr, lastSeq, 0)) {
+        if (s->playing && s->v.setup && Camera::waitFrame(fr, lastSeq, 0)) {
             lastSeq = fr.seq;
             if (!sendJpeg(*s, fr)) { LOGW(TAG, "Saatmine ebaõnnestus – sulgen"); break; }
         }
+
+        // 4) Heli (20 ms paketid)
+        if (s->playing && s->a.setup && !sendAudio(*s)) { LOGW(TAG, "Heli saatmine ebaõnnestus – sulgen"); break; }
+
+        // 5) RTCP Sender Report iga 5 s järel (pildi ja heli sünkroniseerimiseks)
+        if (s->playing && millis() - s->lastSr >= 5000) {
+            const uint32_t now = millis();
+            s->lastSr = now;
+            if (s->v.setup) sendSr(*s, s->v, now * 90, now);
+            if (s->a.setup)
+                sendSr(*s, s->a, s->aTs + (int32_t)(now - Audio::msAt(s->aPos)) * (int32_t)audioRate(*s) / 1000, now);
+        }
     }
 
-    if (s->playing) Camera::removeConsumer();
+    if (s->playing && s->v.setup) Camera::removeConsumer();
     if (s->udp >= 0) close(s->udp);
     shutdown(s->sock, SHUT_RDWR);
     close(s->sock);
@@ -534,8 +652,10 @@ static void serverTask(void *) {
         s->sock = cs;
         s->peer = peer;
         s->sessionId = esp_random();
-        s->ssrc = esp_random();
-        s->seq = esp_random() & 0xFFFF;
+        s->v.ssrc = esp_random();
+        s->v.seq = esp_random() & 0xFFFF;
+        s->a.ssrc = esp_random();
+        s->a.seq = esp_random() & 0xFFFF;
         s->lastActivity = millis();
         s_clients++;
         if (xTaskCreatePinnedToCore(clientTask, "rtsp_cli", 8192, s, 3, nullptr, 1) != pdPASS) {
