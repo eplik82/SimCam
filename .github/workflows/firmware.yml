@@ -2,6 +2,8 @@
 #   * iga push main-i / pull request → kompileerimise kontroll
 #   * silt v* (nt v1.2.0) → GitHub release koos püsivarafailidega
 #     Seade leiab selle FOTA kaudu (⚙ → Püsivara → Kontrolli uuendusi).
+#   * käsitsi käivitus (Actions → Firmware → Run workflow, sisend "tag",
+#     nt v1.4.0) → sama release; silt luuakse valitud haru viimasele commitile.
 name: Firmware
 
 on:
@@ -9,6 +11,11 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release'i silt (nt v1.4.0)"
+        required: true
 
 permissions:
   contents: write
@@ -16,6 +23,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # silt (push) või käsitsi käivituse sisend; tühi = ainult kompileerimise kontroll
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,11 +45,11 @@ jobs:
 
       - name: Build
         env:
-          SIMCAM_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          SIMCAM_VERSION: ${{ env.RELEASE_TAG }}
         run: pio run -e t-simcam
 
       - name: Prepare release files
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(env.RELEASE_TAG, 'v')
         run: |
           cp .pio/build/t-simcam/firmware.bin simcam-firmware.bin
           cp .pio/build/t-simcam/firmware.factory.bin simcam-factory.bin
@@ -47,9 +57,11 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(env.RELEASE_TAG, 'v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: |
             simcam-firmware.bin
             simcam-factory.bin
