@@ -234,9 +234,9 @@ static String batJson() {
     char j[260];
     snprintf(j, sizeof(j),
         "\"bat\":{\"enabled\":%s,\"state\":\"%s\",\"v\":%.3f,\"raw\":%.3f,\"pct\":%d,"
-        "\"slope\":%.2f,\"min_left\":%d,\"usb\":%s,\"cal\":%.4f}",
+        "\"slope\":%.2f,\"min_left\":%d,\"hist_min\":%d,\"usb\":%s,\"cal\":%.4f}",
         b.enabled ? "true" : "false", Battery::stateName(b.state), b.voltage, b.raw, b.percent,
-        b.slope, b.minutesLeft, b.usbHost ? "true" : "false", Settings::get().batCal);
+        b.slope, b.minutesLeft, b.histMinutes, b.usbHost ? "true" : "false", Settings::get().batCal);
     return String(j);
 }
 

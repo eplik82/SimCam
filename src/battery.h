@@ -15,7 +15,7 @@ enum class State : uint8_t {
     Measuring,     // vähe andmeid (esimesed minutid)
     Absent,        // pinget pole → aku puudub
     Charging,      // pinge tõuseb
-    Full,          // ≥ 4,15 V ja ei lange → täis / laadimise lõpp
+    Full,          // ≥ 4,15 V ja ei lange → täis / laadijal
     Discharging,   // pinge langeb
     Low,           // tühjeneb ja ≤ 15 %
     Stable,        // muutus alla mõõtetäpsuse
@@ -29,6 +29,7 @@ struct Status {
     int      percent;      // 0…100 (Li-ion tühjenemiskõvera järgi)
     float    slope;        // mV/min (10 min regressioon), + = laeb
     int      minutesLeft;  // hinnanguline tööaeg (tühjenemisel), -1 = teadmata
+    int      histMinutes;  // mitu minutit mõõtmisi on kogunenud (max 24 h)
     bool     usbHost;      // USB on arvutiga ühendatud (laadija saab toidet)
 };
 

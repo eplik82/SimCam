@@ -187,7 +187,7 @@ details form{margin-top:8px}
    <div class="bat"><span class="pct" id="b_pct">–</span><span class="st" id="b_st">Mõõdan…</span></div>
    <div class="meter" id="b_meter"><div id="b_bar"></div></div>
    <div class="row"><span>Pinge</span><span id="b_v">-</span></div>
-   <div class="row"><span>Muutus (10 min)</span><span id="b_sl">-</span></div>
+   <div class="row"><span>Pinge muutus (10 min)</span><span id="b_sl">-</span></div>
    <div class="row"><span>Hinnanguline tööaeg</span><span id="b_left">-</span></div>
    <div class="row"><span>USB arvutiga</span><span id="b_usb">-</span></div>
    <div class="chart" id="b_chart"><svg id="b_svg" role="img" aria-label="Aku pinge ajalugu"></svg><span class="tip" id="b_tip"></span></div>
@@ -387,7 +387,8 @@ function showBat(b){if(!b)return;$('batOn').style.display=b.enabled?'':'none';$(
  $('b_bar').style.width=(absent?0:b.pct)+'%';$('b_meter').className='meter'+(b.pct<=15?' low':b.pct<=30?' mid':'');
  $('b_v').textContent=b.v.toFixed(2)+' V';
  $('b_sl').textContent=b.state=='MEASURING'?'-':(b.slope>0?'+':'')+b.slope.toFixed(1)+' mV/min';
- $('b_left').textContent=b.min_left>=0?'~'+hm(b.min_left)+' (hinnang)':(b.state=='CHARGING'||b.state=='FULL'?'laadijal':'-');
+ $('b_left').textContent=b.min_left>=0?'~'+hm(b.min_left)+' (hinnang)':b.state=='CHARGING'?'laeb':b.state=='FULL'?'täis / laadijal':
+  b.state=='ABSENT'?'-':b.hist_min<20?`arvutan… (~${20-b.hist_min} min)`:'aku ei tühjene märgatavalt';
  $('b_usb').textContent=b.usb?'jah (laeb USB-st)':'ei / ainult laadija'}
 function drawBat(){const svg=$('b_svg'),W=svg.clientWidth||300,H=150,L=38,R=6,T=8,B=20;
  const n=Math.min(bHist.length,Math.round(bRange*3600/bStep)),d=bHist.slice(-n);

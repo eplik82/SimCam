@@ -84,8 +84,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.5.1
-git push origin v1.5.1
+git tag v1.5.3
+git push origin v1.5.3
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -197,9 +197,9 @@ Veebiliideses: ⚙ → **🔋 Aku**, avalehel pildi all `🔋 63 %` (`⚡` laadi
 | Näit | Kuidas saadakse |
 |---|---|
 | Pinge | GPIO3 ADC (16 lugemise keskmine iga 2 s, silutud), × 2 jaguri järgi, × kalibreerimistegur |
-| Täituvus % | Li-ion tühjenemiskõvera järgi (4,20 V = 100 %, 3,30 V = 0 %) |
-| Olek | pinge muutus viimase 10 min jooksul: tõuseb → **Laeb**, langeb → **Tühjeneb** (≤ 15 % → **Madal**), ≥ 4,15 V → **Täis / laadijal** |
-| Tööaeg | viimase 30 min langus → aeg, kuni pinge jõuab 3,40 V-ni (hinnang) |
+| Täituvus % | Li-ion tühjenemiskõvera järgi koormuse all (4,15 V = 100 %, 3,30 V = 0 %); tühjenemisel näit ainult langeb |
+| Olek | pinge tõuseb (10 min) → **Laeb**; täituvus langeb (kuni 60 min) → **Tühjeneb** (≤ 15 % → **Madal**); muidu ≥ 4,15 V → **Täis / laadijal** |
+| Tööaeg | allesolev % ÷ täituvuse kulu (%/min) viimase kuni 60 min jooksul pärast laadimist; esimene hinnang ~20 min pärast laadijast eemaldamist |
 | Graafik | punkt iga 30 s järel, viimased 24 h (1 h / 6 h / 24 h vaade) |
 | USB arvutiga | ESP32 USB näeb arvutit (siis aku laeb); tavaline USB-laadija ei paista |
 
