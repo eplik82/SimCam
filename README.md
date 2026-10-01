@@ -10,6 +10,7 @@ release'ist (FOTA)**.
 | Veebiliides   | `http://<IP>/` (hotspotis `http://4.3.2.1/`, WiFi-s ka `http://simcam.local/`) |
 | RTSP (MJPEG)  | `rtsp://admin:<parool>@<IP>:554/live`     |
 | MJPEG voog    | `http://<IP>/stream`                       |
+| Heli (brauser)| `http://<IP>/audio` (mikrofoni sisselülitamisel) |
 | Hetktõmmis    | `http://<IP>/capture`                      |
 | Olek (JSON)   | `http://<IP>/api/status`                   |
 | Logi          | `http://<IP>/log` (tekstina `http://<IP>/api/log`) |
@@ -22,14 +23,15 @@ release'ist (FOTA)**.
 
 ## Omadused
 
-* **Kaamera:** OV5640 (ka OV2640/OV3660), JPEG 800x600, pidev autofookus + nupp
-  „Fookus", pööramine nuppudega 0°/90°/180°/270° (kehtib ka RTSP-s), madal viivitus –
+* **Kaamera:** OV5640 (ka OV2640/OV3660), JPEG, resolutsioon valitav 320×240 … 1920×1080
+  (vaikimisi 800×600, ⚙ → 📷 Pilt), pidev autofookus + nupp
+  „Fookus", pööramine 0°/180° (teeb sensor, kehtib ka RTSP-s), madal viivitus –
   aeglase võrgu korral jäetakse kaadrid vahele, puhvrit ei kogune.
 * **Pealeht:** pildi all tegelik kaadrisagedus ja võrgukiirus (kB/s, Mbit/s), mida
-  just see brauser saab; 90°/270° pöörde korral hoiatus madalama FPS-i kohta.
+  just see brauser saab.
 * **RTSP server** (port 554): RTP/JPEG (RFC 2435), UDP ja TCP interleaved,
   kuni 4 klienti. Testitud VLC ja FFmpeg-iga.
-* **Veebiliides:** avalehel ainult pilt ja nupud (peata/jätka, ↺/↻ 90°,
+* **Veebiliides:** avalehel ainult pilt ja nupud (peata/jätka, 0°/180°,
   autofookus, hetktõmmis). Olek ja seaded eraldi lehel (⚙).
 * **Juurdepääs parooliga** (veeb + RTSP), sessiooniküpsis kehtib 30 päeva.
 * **WiFi klient + hotspot korraga.** Hotspotiga ühendudes avaneb telefonis
@@ -41,6 +43,8 @@ release'ist (FOTA)**.
   ise sisse (ja pärast ühenduse taastumist välja).
 * **FOTA:** kontrollib GitHubi release'e, paigaldab nupuvajutusel või soovi korral
   automaatselt; eelmine versioon taastatakse, kui uus ei käivitu.
+* **Mikrofon** (MSM261S4030H0R, I²S): heli RTSP voos (G.711 8 kHz või L16 16 kHz)
+  ja brauseris (🔊), helitaseme näit, võimendus – vaikimisi **väljas**, vt [Mikrofon](#mikrofon).
 * **Aku** (TP4056 laadija plaadil): täituvus %, pinge, olek (laeb / tühjeneb /
   täis), hinnanguline tööaeg ja 24 h pingegraafik – vt [Aku](#aku).
 * **Logi veebiliideses** (⚙ → 📄 Logi): seadme logi reaalajas, filtreerimine
@@ -84,8 +88,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.5.1
-git push origin v1.5.1
+git tag v1.8.4
+git push origin v1.8.4
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -179,11 +183,48 @@ RTP/RTSP → ✔ *Use RTP over RTSP (TCP)*.
 
 ## Pööramine ja kaamera juhtimine
 
-* 180° teeb sensor ise (täiskiirus). 90°/270° puhul kodeeritakse iga kaader ümber
-  (`esp_new_jpeg`, ~260 ms kaadri kohta → ~3–4 fps, pilt 600x800).
+**Resolutsioon:** ⚙ → **📷 Pilt** → QVGA 320×240, VGA 640×480, **SVGA 800×600**
+(vaikimisi), XGA 1024×768, HD 1280×720, SXGA 1280×1024, UXGA 1600×1200 või
+Full HD 1920×1080 (OV2640 puhul kuni UXGA). Valik rakendub kohe ja salvestub.
+Suurem resolutsioon = väiksem kaadrisagedus ja suurem andmemaht – LTE-s soovitame
+SVGA-d või väiksemat. Kaadripuhvrid eraldatakse käivitusel suurima resolutsiooni
+jaoks.
+
+* Pööre: 0° või 180° – teeb sensor ise (täiskiirus, lisamälu pole vaja).
+  90°/270° (tarkvaraline JPEG ümberkodeerimine) eemaldati v1.8.0-s mälu ja
+  protsessoriaja säästmiseks; varem salvestatud 270° muutub 180°-ks, 90° → 0°.
 * `GET /api/cam?var=<nimi>&val=<väärtus>` – nt `rotate`, `aec`, `aec_value`,
   `agc_gain`, `brightness`, `hmirror`, `vflip`, `framesize`, `quality`, `ir`.
   Ilma parameetriteta tagastab kõik seaded.
+
+## Mikrofon
+
+Plaadil on digitaalne MEMS-mikrofon **MSM261S4030H0R** (skeem `T_SIMCAM-V1.3`,
+U3; I²S: SCK = GPIO41, WS = GPIO42, andmed = GPIO2, L/R = GND → vasak kanal –
+samad viigud on LilyGO tehasetarkvaras). Mikrofon on vaikimisi **väljas**:
+⚙ → **🎤 Mikrofon** → „Mikrofon sees".
+
+| Seade | Tähendus |
+|---|---|
+| Helitase | RMS ja tipp (dBFS) viimase 0,2 s jooksul; punane = tipp üle −3 dBFS (moonutab) |
+| Võimendus | 0–40 dB (vaikimisi 24 dB). Vaikne heli → suurenda; tipp punane → vähenda |
+| Helikvaliteet | **G.711 µ-law 8 kHz** (64 kbit/s, soovitatav, toetavad kõik mängijad ja salvestid) või **L16 16 kHz** (256 kbit/s, selgem) |
+| Heli RTSP voos | lisab RTSP-sse helirajad (`track2`); rakendub uutele ühendustele |
+| Mikrofoni kanal | **automaatne** (vaikimisi), vasak või parem. Kaardil on mõlema kanali tase – õige on see, mille tase rääkides muutub; vale kanal annab ainult sahinat |
+
+* **Brauseris:** avalehel 🔈/🔊 nupp (heli algab alles vajutusel – brauserid ei luba
+  heli automaatselt), pildi all helitaseme riba; viivitus ~0,2–0,4 s. Seadete lehel
+  „🔈 Kuula" mikrofoni testimiseks. Samaaegselt kuni 2 kuulajat.
+* **RTSP:** sama URL (`rtsp://admin:<parool>@<IP>:554/live`) – VLC/ffplay mängivad
+  pilti ja heli koos. Pilt ja heli seotakse ühisele ajateljele RTCP Sender Reportiga
+  (iga 5 s). Aeglases võrgus jäetakse üle 0,4 s maha jäänud heli vahele.
+* Mikrofoni sisselülitamisel proovib seade ~4 s jooksul läbi I²S taktid (48/32/16 kHz →
+  BCLK 3,07/2,05/1,02 MHz) ja vormingud (Philips/MSB) ning valib selle, kus üks kanal
+  annab tüüpilist mikrofoni signaali (−100…−20 dBFS) ja teine on vaikne (andmeliinil on
+  10 kΩ maandustakisti). Tulemused on logis (`MIC`, „Proov …"); uuesti proovimiseks
+  lülita mikrofon välja ja sisse.
+* Heli töödeldakse: I²S → 16 kHz (keskmistamine), alalisvoolu eemaldus, võimendus.
+* Heli salvestamisel arvesta teiste inimeste privaatsusega.
 
 ## Aku
 
@@ -197,9 +238,9 @@ Veebiliideses: ⚙ → **🔋 Aku**, avalehel pildi all `🔋 63 %` (`⚡` laadi
 | Näit | Kuidas saadakse |
 |---|---|
 | Pinge | GPIO3 ADC (16 lugemise keskmine iga 2 s, silutud), × 2 jaguri järgi, × kalibreerimistegur |
-| Täituvus % | Li-ion tühjenemiskõvera järgi (4,20 V = 100 %, 3,30 V = 0 %) |
-| Olek | pinge muutus viimase 10 min jooksul: tõuseb → **Laeb**, langeb → **Tühjeneb** (≤ 15 % → **Madal**), ≥ 4,15 V → **Täis / laadijal** |
-| Tööaeg | viimase 30 min langus → aeg, kuni pinge jõuab 3,40 V-ni (hinnang) |
+| Täituvus % | Li-ion tühjenemiskõvera järgi koormuse all (4,15 V = 100 %, 3,30 V = 0 %); tühjenemisel näit ainult langeb |
+| Olek | pinge tõuseb (10 min) → **Laeb**; täituvus langeb (kuni 60 min) → **Tühjeneb** (≤ 15 % → **Madal**); muidu ≥ 4,15 V → **Täis / laadijal** |
+| Tööaeg | allesolev % ÷ täituvuse kulu (%/min) viimase kuni 60 min jooksul pärast laadimist; esimene hinnang ~20 min pärast laadijast eemaldamist |
 | Graafik | punkt iga 30 s järel, viimased 24 h (1 h / 6 h / 24 h vaade) |
 | USB arvutiga | ESP32 USB näeb arvutit (siis aku laeb); tavaline USB-laadija ei paista |
 
@@ -327,6 +368,9 @@ Sierra Wireless *AirPrime MC7304 Product Technical Specification*,
 | LTE IP pole see, mida ootasid | APN vale või staatilise IP teenus pole SIM-ile aktiveeritud |
 | FOTA: „GitHubiga ei saanud ühendust" | seadmel pole internetti (ainult hotspot ei piisa) |
 | Seade taaskäivitub ise | ⚙ → 📄 Logi → „Eelmine käivitus": põhjus ja viimased read enne taaskäivitust |
+| Heli ei kõla / helitase ~ −90 dBFS | mikrofon seadetes väljas või logis „Mikrofon ei anna signaali" |
+| Heli moonutab | vähenda võimendust (tipp ei tohi olla punane) |
+| Heli asemel ainult sahin | vaata logist `MIC` „Proov …" ridu; mõlemas kanalis ~−5 dBFS = mikrofon ei tööta selle seadistusega |
 | Brownout LTE ühendumisel | modem tarbib kuni 2 A tippe – kasuta korralikku 5 V toidet |
 
 ## Projekti struktuur
@@ -349,6 +393,7 @@ SimCam/
     ├── modem_lte.*           LTE: PWRKEY, PIN, APN, PPP/CMUX, taastamine
     ├── ota.*                 FOTA GitHubi release'ist + tagasipööramine
     ├── battery.*             aku pinge (GPIO3), täituvus, olek, ajalugu
+    ├── audio.*               mikrofon (I²S), heli ringpuhver, G.711 kodeerija
     ├── settings.*            NVS seaded
     ├── auth.*                parool, sessiooniküpsis, HTTP Basic
     └── log.*                 logi: USB Serial + mälupuhver (/log) + eelmise käivituse logi (RTC)

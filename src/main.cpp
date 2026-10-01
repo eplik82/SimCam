@@ -25,6 +25,7 @@
 #include "wifi_manager.h"
 #include "ota.h"
 #include "battery.h"
+#include "audio.h"
 
 static const char *TAG = "MAIN";
 
@@ -49,6 +50,7 @@ void setup() {
 
     Settings::load();                 // NVS seaded (WiFi, LTE, pildi pööre)
     Battery::begin();                 // aku pinge (GPIO3) ja olek
+    Audio::begin();                   // mikrofon (I²S), kui seadetes sees
 
     // Kaamera enne modemit: esp_camera vajab suurt DMA/PSRAM plokki,
     // mille eraldamine on kõige kindlam kohe käivitumisel.

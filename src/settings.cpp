@@ -23,6 +23,7 @@ static void defaults(Data &d) {
     strlcpy(d.apPass, WIFI_AP_PASS_DEFAULT, sizeof(d.apPass));
     d.lteEnabled = LTE_ENABLED_DEFAULT;
     d.rotation = CAM_ROTATION_DEFAULT;
+    d.framesize = CAM_FRAME_SIZE;
     d.simPin[0] = 0;
     d.apn[0] = 0;
     strlcpy(d.webPass, WEB_PASS_DEFAULT, sizeof(d.webPass));
@@ -31,6 +32,11 @@ static void defaults(Data &d) {
     d.autoUpdate = false;
     d.batEnabled = true;
     d.batCal = 1.0f;
+    d.micEnabled = false;
+    d.micGain = 24;
+    d.micCodec = 0;
+    d.micChan = 2;
+    d.rtspAudio = true;
 }
 
 bool applyFailsafe(Data &d) {
@@ -57,6 +63,8 @@ void load() {
         if (p.isKey("ap_pass")) p.getString("ap_pass", d.apPass, sizeof(d.apPass));
         d.lteEnabled = p.getBool("lte_en", d.lteEnabled);
         d.rotation = p.getShort("rot", d.rotation);
+        // 90°/270° eemaldati v1.8.0-s: 270° → 180°, muu → 0° (muidu ei läbiks save() kontrolli)
+        if (d.rotation != 0 && d.rotation != 180) d.rotation = d.rotation == 270 ? 180 : 0;
         if (p.isKey("sim_pin")) p.getString("sim_pin", d.simPin, sizeof(d.simPin));
         if (p.isKey("apn")) p.getString("apn", d.apn, sizeof(d.apn));
         if (p.isKey("web_pass")) p.getString("web_pass", d.webPass, sizeof(d.webPass));
@@ -65,6 +73,12 @@ void load() {
         d.batEnabled = p.getBool("bat_en", d.batEnabled);
         d.batCal = p.getFloat("bat_cal", d.batCal);
         if (!(d.batCal > 0.8f && d.batCal < 1.25f)) d.batCal = 1.0f;
+        d.framesize = p.getInt("framesize", d.framesize);
+        d.micEnabled = p.getBool("mic_en", d.micEnabled);
+        d.micGain = constrain(p.getInt("mic_gain", d.micGain), 0, 40);
+        d.micCodec = p.getInt("mic_codec", d.micCodec) == 1 ? 1 : 0;
+        d.micChan = constrain(p.getInt("mic_chan2", d.micChan), 0, 2);   // uus võti: vaikimisi automaatne
+        d.rtspAudio = p.getBool("rtsp_audio", d.rtspAudio);
         if (p.isKey("salt")) p.getString("salt", d.authSalt, sizeof(d.authSalt));
         p.end();
     }
@@ -97,9 +111,10 @@ bool save(const Data &din) {
     // WPA2 parool peab olema 8–63 märki (või tühi = avatud võrk kliendi puhul)
     if (d.apEnabled && (strlen(d.apSsid) == 0 || strlen(d.apPass) < 8)) return false;
     if (d.staEnabled && strlen(d.staSsid) == 0) return false;
-    if (d.rotation % 90 != 0 || d.rotation < 0 || d.rotation > 270) return false;
+    if (d.rotation != 0 && d.rotation != 180) return false;
     if (strlen(d.webPass) < 4) return false;
     if (!(d.batCal > 0.8f && d.batCal < 1.25f)) return false;
+    if (d.micGain < 0 || d.micGain > 40 || (d.micCodec != 0 && d.micCodec != 1)) return false;
     for (const char *c = d.simPin; *c; c++) if (*c < '0' || *c > '9') return false;   // PIN = numbrid
     Preferences p;
     if (!p.begin(NS, false)) return false;
@@ -119,6 +134,12 @@ bool save(const Data &din) {
     p.putBool("auto_upd", d.autoUpdate);
     p.putBool("bat_en", d.batEnabled);
     p.putFloat("bat_cal", d.batCal);
+    p.putInt("framesize", d.framesize);
+    p.putBool("mic_en", d.micEnabled);
+    p.putInt("mic_gain", d.micGain);
+    p.putInt("mic_codec", d.micCodec);
+    p.putInt("mic_chan2", d.micChan);
+    p.putBool("rtsp_audio", d.rtspAudio);
     p.end();
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_d = d;

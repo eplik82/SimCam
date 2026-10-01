@@ -13,6 +13,7 @@
 #include "wifi_manager.h"
 #include "ota.h"
 #include "battery.h"
+#include "audio.h"
 #include "log.h"
 
 #include <Arduino.h>
@@ -28,6 +29,7 @@ namespace WebUI {
 
 static httpd_handle_t   s_server = nullptr;
 static std::atomic<int> s_streams{0};
+static std::atomic<int> s_audioStreams{0};
 
 // Iga MJPEG vaataja statistika (kaadrisagedus ja andmemaht), et veebileht saaks
 // näidata, mida see brauser tegelikult kätte saab. Vaataja tuvastatakse
@@ -154,6 +156,12 @@ static esp_err_t h_settings(httpd_req_t *req) {
     return sendPage(req, SETTINGS_HTML);
 }
 
+static esp_err_t h_audio_js(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/javascript");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
+    return httpd_resp_send(req, AUDIO_JS, strlen_P(AUDIO_JS));
+}
+
 static esp_err_t h_style(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/css");
     httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
@@ -229,14 +237,26 @@ static esp_err_t h_password(httpd_req_t *req) {
 // --- Aku -------------------------------------------------------------------------
 static esp_err_t sendJson(httpd_req_t *req, const String &j);
 
+static String micJson() {
+    const Settings::Data d = Settings::get();
+    char j[320];
+    snprintf(j, sizeof(j),
+        "\"mic\":{\"enabled\":%s,\"running\":%s,\"level\":%.1f,\"peak\":%.1f,\"gain\":%d,"
+        "\"codec\":%d,\"rtsp\":%s,\"listeners\":%d,\"chan\":%d,\"used_chan\":%d,\"l_db\":%.0f,\"r_db\":%.0f,\"i2s\":\"%s\"}",
+        d.micEnabled ? "true" : "false", Audio::running() ? "true" : "false", Audio::levelDb(),
+        Audio::peakDb(), d.micGain, d.micCodec, d.rtspAudio ? "true" : "false", (int)s_audioStreams,
+        d.micChan, Audio::channel(), Audio::chanDb(0), Audio::chanDb(1), Audio::config());
+    return String(j);
+}
+
 static String batJson() {
     Battery::Status b = Battery::status();
     char j[260];
     snprintf(j, sizeof(j),
         "\"bat\":{\"enabled\":%s,\"state\":\"%s\",\"v\":%.3f,\"raw\":%.3f,\"pct\":%d,"
-        "\"slope\":%.2f,\"min_left\":%d,\"usb\":%s,\"cal\":%.4f}",
+        "\"slope\":%.2f,\"min_left\":%d,\"hist_min\":%d,\"usb\":%s,\"cal\":%.4f}",
         b.enabled ? "true" : "false", Battery::stateName(b.state), b.voltage, b.raw, b.percent,
-        b.slope, b.minutesLeft, b.usbHost ? "true" : "false", Settings::get().batCal);
+        b.slope, b.minutesLeft, b.histMinutes, b.usbHost ? "true" : "false", Settings::get().batCal);
     return String(j);
 }
 
@@ -307,7 +327,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         "\"rsrp\":%d,\"rsrq\":%.1f,\"reg\":%d,\"model\":\"%s\",\"imei\":\"%s\","
         "\"baud\":%lu,\"cmux\":%s,\"conn_s\":%lu,\"reconnects\":%lu,\"error\":\"%s\"},"
         "\"cam\":{\"sensor\":\"%s\",\"res\":\"%s\",\"fps\":%.2f,\"frame_kb\":%.1f,"
-        "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d,\"rot_ms\":%.0f},"
+        "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d},"
         "\"sys\":{\"uptime\":%llu,\"heap_free\":%u,\"heap_total\":%u,\"heap_min\":%u,"
         "\"psram_free\":%u,\"psram_total\":%u,\"temp\":%.1f,\"rtsp_clients\":%d,"
         "\"http_streams\":%d,\"rtsp_auth\":%s,\"rtsp_url\":\"rtsp://%s:%d%s\",\"fw\":\"%s\","
@@ -321,13 +341,13 @@ static esp_err_t h_status(httpd_req_t *req) {
         (unsigned long)m.reconnects, err,
         Camera::sensorName(), Camera::resolutionName(), Camera::fps(),
         Camera::lastFrameBytes() / 1024.0f, Camera::afStatus(),
-        Camera::afSupported() ? "true" : "false", Camera::consumers(), Camera::rotation(), Camera::rotateMs(),
+        Camera::afSupported() ? "true" : "false", Camera::consumers(), Camera::rotation(),
         (unsigned long long)(esp_timer_get_time() / 1000000ULL),
         ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(),
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
         RtspServer::clients(), (int)s_streams, (Auth::enabled() && cfgd.rtspAuth) ? "true" : "false", ip, RTSP_PORT, RTSP_PATH,
         SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors(),
-        batJson().c_str());
+        (batJson() + "," + micJson()).c_str());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -530,11 +550,13 @@ static esp_err_t h_view(httpd_req_t *req) {
         if (v.used && id[0] && !strcmp(v.id, id)) { fps = v.fps; kBps = v.kBps; }
     portEXIT_CRITICAL(&s_viewMux);
     Battery::Status bs = Battery::status();
-    char b[256];
+    char b[320];
     snprintf(b, sizeof(b), "{\"fps\":%.1f,\"kBps\":%.1f,\"cam_fps\":%.1f,\"rotate\":%d,\"frame_kb\":%.1f,"
-             "\"bat\":{\"enabled\":%s,\"state\":\"%s\",\"v\":%.2f,\"pct\":%d}}",
+             "\"bat\":{\"enabled\":%s,\"state\":\"%s\",\"v\":%.2f,\"pct\":%d},"
+             "\"mic\":{\"on\":%s,\"level\":%.1f}}",
              fps, kBps, Camera::fps(), Camera::rotation(), Camera::lastFrameBytes() / 1024.0f,
-             bs.enabled ? "true" : "false", Battery::stateName(bs.state), bs.voltage, bs.percent);
+             bs.enabled ? "true" : "false", Battery::stateName(bs.state), bs.voltage, bs.percent,
+             Audio::running() ? "true" : "false", Audio::levelDb());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, b);
@@ -549,7 +571,7 @@ static esp_err_t h_favicon(httpd_req_t *req) {
 static esp_err_t h_config_get(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     Settings::Data d = Settings::get();
-    char ss[70], as[70], apn[130], buf[600];
+    char ss[70], as[70], apn[130], buf[1400];
     jsonEsc(ss, sizeof(ss), d.staSsid);
     jsonEsc(as, sizeof(as), d.apSsid);
     jsonEsc(apn, sizeof(apn), d.apn);
@@ -557,12 +579,16 @@ static esp_err_t h_config_get(httpd_req_t *req) {
     int n = snprintf(buf, sizeof(buf),
         "{\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
         "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
-        "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s}",
+        "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s,"
+        "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"mic_chan\":%d,\"rtsp_audio\":%s,"
+        "\"framesize\":%d,\"framesizes\":%s}",
         d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
         d.lteEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
         strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false",
-        d.autoUpdate ? "true" : "false");
+        d.autoUpdate ? "true" : "false",
+        d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.micChan, d.rtspAudio ? "true" : "false",
+        Camera::framesize(), Camera::framesizesJson().c_str());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, buf, n);
@@ -581,6 +607,11 @@ static esp_err_t h_config_post(httpd_req_t *req) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
         return ESP_FAIL;
     }
+    char fsv[8];
+    if (formField(body, "framesize", fsv, sizeof(fsv)) && fsv[0]) {   // resolutsioon: rakendub kohe
+        if (!Camera::setFramesize(atoi(fsv)))
+            return sendJson(req, "{\"ok\":false,\"error\":\"Seda resolutsiooni see sensor ei toeta\"}");
+    }
 
     Settings::Data d = Settings::get();
     const bool oldLte = d.lteEnabled;
@@ -597,6 +628,11 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "sim_pin", v, sizeof(v)) && v[0]) strlcpy(d.simPin, v, sizeof(d.simPin));
     if (formField(body, "sim_pin_clear", v, sizeof(v)) && v[0] == '1') d.simPin[0] = 0;
     if (formField(body, "rtsp_auth", v, sizeof(v))) d.rtspAuth = v[0] == '1';
+    if (formField(body, "mic_en", v, sizeof(v))) d.micEnabled = v[0] == '1';
+    if (formField(body, "mic_gain", v, sizeof(v))) d.micGain = constrain(atoi(v), 0, 40);
+    if (formField(body, "mic_codec", v, sizeof(v))) d.micCodec = v[0] == '1' ? 1 : 0;
+    if (formField(body, "mic_chan", v, sizeof(v))) d.micChan = constrain(atoi(v), 0, 2);
+    if (formField(body, "rtsp_audio", v, sizeof(v))) d.rtspAudio = v[0] == '1';
     bool autoOn = false;
     if (formField(body, "auto_update", v, sizeof(v))) { autoOn = v[0] == '1' && !d.autoUpdate; d.autoUpdate = v[0] == '1'; }
     const bool apForced = Settings::applyFailsafe(d);
@@ -614,6 +650,8 @@ static esp_err_t h_config_post(httpd_req_t *req) {
              reboot ? "true" : "false", apForced ? "true" : "false");
     httpd_resp_sendstr(req, resp);
     LOGI(TAG, "Seaded muudetud veebiliidesest%s", reboot ? " (LTE muutus → vajab taaskäivitust)" : "");
+    if (before.micEnabled != d.micEnabled || before.micGain != d.micGain || before.micChan != d.micChan)
+        Audio::apply();
     // WiFi taaskäivitus ainult siis, kui WiFi/hotspoti seaded tegelikult muutusid
     // (muidu katkeks nt RTSP ja käimasolev uuenduste kontroll asjatult).
     const Settings::Data after = Settings::get();
@@ -704,6 +742,68 @@ static void streamTask(void *arg) {
     vTaskDelete(nullptr);
 }
 
+// --- Heli brauserisse: /audio --------------------------------------------------
+// Toores heli jupitatud HTTP vastusena (fetch + Web Audio brauseris):
+//   X-Audio-Format: mulaw (8 kHz, 1 bait/diskreet) või s16le (16 kHz)
+static void audioTask(void *arg) {
+    httpd_req_t *req = (httpd_req_t *)arg;
+    const bool l16 = Settings::get().micCodec == 1;
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Audio-Format", l16 ? "s16le" : "mulaw");
+    httpd_resp_set_hdr(req, "X-Audio-Rate", l16 ? "16000" : "8000");
+    LOGI(TAG, "Brauseri helivoog lisandus (%d)", (int)s_audioStreams);
+
+    // Puhvrid kuhjas, mitte pinus: varem 2,6 kB pinus + lwIP saatmine + logi
+    // ületas 4 kB pinu → seade taaskäivitus (v1.6.0–v1.8.0 "Kuula" nupp).
+    const size_t N = MIC_RATE / 25;                           // 40 ms
+    int16_t *pcm = (int16_t *)malloc(N * sizeof(int16_t));
+    uint8_t *out = (uint8_t *)malloc(N * 2);
+    uint32_t pos = Audio::position(), skipped;
+    uint32_t idle = millis();
+    for (;pcm && out;) {
+        if (!Audio::running()) {
+            if (millis() - idle > 3000) break;                // mikrofon lülitati välja
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        idle = millis();
+        if (!Audio::read(&pos, pcm, N, 500, &skipped)) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
+        size_t len;
+        if (l16) { memcpy(out, pcm, N * 2); len = N * 2; }
+        else len = Audio::encodePcmu(pcm, N, out);
+        if (httpd_resp_send_chunk(req, (const char *)out, len) != ESP_OK) break;
+    }
+    free(pcm);
+    free(out);
+    httpd_resp_send_chunk(req, nullptr, 0);
+    httpd_req_async_handler_complete(req);
+    s_audioStreams--;
+    LOGI(TAG, "Brauseri helivoog lõppes (pinu vaba min %u B)", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+    vTaskDelete(nullptr);
+}
+
+static esp_err_t h_audio(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    if (!Audio::running()) {
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(req, "Mikrofon on välja lülitatud");
+    }
+    if (s_audioStreams >= AUDIO_HTTP_MAX) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_sendstr(req, "Liiga palju kuulajaid");
+    }
+    httpd_req_t *copy = nullptr;
+    if (httpd_req_async_handler_begin(req, &copy) != ESP_OK) return ESP_FAIL;
+    s_audioStreams++;
+    if (xTaskCreatePinnedToCore(audioTask, "audio_http", 6144, copy, 4, nullptr, 1) != pdPASS) {
+        s_audioStreams--;
+        httpd_req_async_handler_complete(copy);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t h_stream(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     if (s_streams >= HTTP_MAX_STREAMS) {
@@ -749,7 +849,7 @@ bool begin() {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port      = HTTP_PORT;
     cfg.ctrl_port        = 32768;
-    cfg.max_uri_handlers = 32;
+    cfg.max_uri_handlers = 40;
     cfg.max_open_sockets = 7;
     cfg.lru_purge_enable = true;          // vabasta vanimad, kui soketid otsas
     cfg.stack_size       = 8192;
@@ -774,6 +874,8 @@ bool begin() {
         {"/api/reboot", HTTP_POST, h_reboot,  nullptr},
         {"/capture",    HTTP_GET,  h_capture, nullptr},
         {"/stream",     HTTP_GET,  h_stream,  nullptr},
+        {"/audio",      HTTP_GET,  h_audio,   nullptr},
+        {"/audio.js",   HTTP_GET,  h_audio_js, nullptr},
         {"/api/config", HTTP_GET,  h_config_get,  nullptr},
         {"/api/config", HTTP_POST, h_config_post, nullptr},
         {"/api/scan",   HTTP_GET,  h_scan,    nullptr},

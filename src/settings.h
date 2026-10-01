@@ -14,7 +14,8 @@ struct Data {
     char apSsid[33];
     char apPass[65];
     bool lteEnabled;
-    int  rotation;            // kaamerapildi pööre: 0 / 90 / 180 / 270 (päripäeva)
+    int  rotation;            // kaamerapildi pööre: 0 / 180
+    int  framesize;           // kaamera resolutsioon (esp32-camera framesize_t)
     char simPin[9];           // SIM PIN (tühi = PIN-i ei saadeta)
     char apn[64];             // APN, nt operaatori staatilise IP APN
     char webPass[65];         // veebiliidese + RTSP parool
@@ -22,7 +23,12 @@ struct Data {
     bool rtspAuth;            // kas RTSP nõuab parooli
     bool autoUpdate;          // paigalda GitHubi uuendused automaatselt
     bool batEnabled;          // aku on ühendatud (näita olekut veebiliideses)
-    float batCal;             // aku pinge kalibreerimistegur (1.0 = ilma parandita)        // juhuslik sool sessiooniküpsise jaoks (hex)
+    float batCal;             // aku pinge kalibreerimistegur (1.0 = ilma parandita)
+    bool micEnabled;          // mikrofon sees (vaikimisi väljas – privaatsus)
+    int  micGain;             // mikrofoni võimendus dB (0…40)
+    int  micCodec;            // 0 = G.711 µ-law 8 kHz, 1 = L16 16 kHz
+    int  micChan;             // I²S kanal: 0 = vasak, 1 = parem, 2 = automaatne (proovimisel leitud)
+    bool rtspAudio;           // lisa helirada RTSP voogu        // juhuslik sool sessiooniküpsise jaoks (hex)
 };
 
 void load();                  // loe NVS-ist (puuduvad väärtused = config.h vaikeväärtused)
