@@ -117,7 +117,13 @@
 #define LTE_RATE_DEBUG             0     // 1 = logi iga AT vastamisaja mõõtmine
 #define LTE_RATE_START_KBPS       25     // algeelarve, kui levi pole teada
 #define LTE_RATE_MIN_KBPS          6
-#define LTE_RATE_MAX_KBPS         45     // RSRP -110: 51 kB/s juures AT 68 ms ja peagi kinni
+// Eelarve lagi sõltub levist (RSRP libisev keskmine): nõrga levi korral jõuab LTE vähem üles.
+// RSRP -110: 51 kB/s juures AT 68 ms ja peagi kinni → nõrga levi lagi 45. UART lagi ~80 kB/s.
+#define LTE_RATE_CAP_GOOD_KBPS    70     // RSRP >= LTE_RATE_RSRP_GOOD
+#define LTE_RATE_CAP_MID_KBPS     55     // RSRP >= LTE_RATE_RSRP_MID
+#define LTE_RATE_CAP_WEAK_KBPS    45     // halvem või teadmata
+#define LTE_RATE_RSRP_GOOD       -95
+#define LTE_RATE_RSRP_MID       -105
 #define LTE_RATE_STEP_KBPS         1     // tõus iga hea mõõtmise järel (kui eelarvest jääb puudu)
 #define LTE_RATE_BURST_S         1.5f    // kui palju võib korraga "ette" saata (sekundites)
 #define LTE_RATE_PROBE_MS       2000     // AT vastamisaja mõõtmine voo ajal

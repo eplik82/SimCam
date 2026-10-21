@@ -21,6 +21,8 @@ namespace LteRate {
 struct Status {
     bool     active = false;     // LTE kaudu saadeti viimase 3 s jooksul kaadreid
     float    budgetKBps = 0;     // praegune eelarve
+    float    capKBps = 0;        // eelarve lagi (sõltub levist)
+    int      rsrpDbm = 0;        // RSRP libisev keskmine (0 = teadmata)
     float    sentKBps = 0;       // tegelikult saadetud (viimased ~2 s)
     float    fps = 0;            // LTE kaudu saadetud kaadreid sekundis (kõik vaatajad kokku)
     uint32_t rttMs = 0;          // viimane modemi AT vastamisaeg
@@ -30,6 +32,7 @@ struct Status {
 
 void reset(uint32_t localIp, int rsrpDbm);  // PPP sai IP (0 = LTE maas); algeelarve levi järgi
 bool isLteSocket(int fd);                   // kas sokli kohalik aadress on PPP IP?
+void setSignal(int rsrpDbm);                // uus RSRP mõõtmine (iga ~10 s) → eelarve lagi
 
 bool allow(size_t bytes);                   // kas võib kaadri LTE kaudu saata (võtab eelarvest)
 void consume(size_t bytes);                 // saadeti nagunii (nt heli) – arvesta eelarvest

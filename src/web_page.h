@@ -424,7 +424,7 @@ const form=o=>({method:'POST',headers:{'Content-Type':'application/x-www-form-ur
 function dur(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
  return (d?d+'p ':'')+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
 function showRate(r){if(!r)return;$('m_rate').textContent=r.active?
- `${r.sent.toFixed(0)} kB/s · ${r.fps.toFixed(1)} fps (eelarve ${r.budget.toFixed(0)} kB/s, modem ${r.rtt||'–'} ms)`:`ootel · eelarve ${r.budget.toFixed(0)} kB/s`}
+ `${r.sent.toFixed(0)} kB/s · ${r.fps.toFixed(1)} fps (eelarve ${r.budget.toFixed(0)}/${r.cap} kB/s, modem ${r.rtt||'–'} ms)`:`ootel · lagi ${r.cap} kB/s levi järgi`}
 function showGps(g){if(!g)return;let st,cls='warn';const has=g.age_s>=0,nx=g.next_s>=0?`, järgmine ${dur(g.next_s)} pärast`:'';
  if(!g.enabled){st='väljas';cls=''}else if(g.note){st=g.note;cls='bad'}
  else if(g.active)st=!g.on?'käivitub…':g.fix?'asukoht leitud, täpsustan…':'otsin satelliite…';

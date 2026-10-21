@@ -105,8 +105,8 @@ void loop() {
         const LteRate::Status rs = LteRate::status();
         if (rs.active) {
             size_t l = strlen(gps);
-            snprintf(gps + l, sizeof(gps) - l, " | LTE voog %.0f kB/s %.1f fps (eelarve %.0f, AT %lu/%lu ms)",
-                     rs.sentKBps, rs.fps, rs.budgetKBps, (unsigned long)rs.rttMs, (unsigned long)rs.baseRttMs);
+            snprintf(gps + l, sizeof(gps) - l, " | LTE voog %.0f kB/s %.1f fps (eelarve %.0f/%.0f, AT %lu/%lu ms)",
+                     rs.sentKBps, rs.fps, rs.budgetKBps, rs.capKBps, (unsigned long)rs.rttMs, (unsigned long)rs.baseRttMs);
         }
         LOGI(TAG, "WiFi=%s %s (%d dBm) AP=%d kl. | LTE=%s IP=%s op=%s CSQ=%d (%d dBm) RSRP=%d | cam %.1f fps %u kB AF=%s | "
                   "rtsp=%d web=%d | heap=%u psram=%u | %.1f°C%s%s",

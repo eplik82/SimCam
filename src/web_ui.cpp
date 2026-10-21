@@ -302,10 +302,10 @@ static String gpsJson() {
 // LTE vaatajate saatmiseelarve (lte_rate.h)
 static String rateJson() {
     const LteRate::Status r = LteRate::status();
-    char j[200];
+    char j[240];
     snprintf(j, sizeof(j),
-        "\"lterate\":{\"active\":%s,\"budget\":%.1f,\"sent\":%.1f,\"fps\":%.2f,\"rtt\":%lu,\"base\":%lu,\"cuts\":%lu}",
-        r.active ? "true" : "false", r.budgetKBps, r.sentKBps, r.fps,
+        "\"lterate\":{\"active\":%s,\"budget\":%.1f,\"cap\":%.0f,\"rsrp\":%d,\"sent\":%.1f,\"fps\":%.2f,\"rtt\":%lu,\"base\":%lu,\"cuts\":%lu}",
+        r.active ? "true" : "false", r.budgetKBps, r.capKBps, r.rsrpDbm, r.sentKBps, r.fps,
         (unsigned long)r.rttMs, (unsigned long)r.baseRttMs, (unsigned long)r.cuts);
     return String(j);
 }

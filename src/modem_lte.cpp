@@ -602,7 +602,7 @@ static bool pollModem() {
     LteRate::atSample(millis() - t0, ok);              // tühikäigu vastamisaeg (võrdluseks)
     if (!ok) return false;
     parseCsq(r);
-    if (PPP.cmd("AT+CESQ", r, 1000))  parseCesq(r);
+    if (PPP.cmd("AT+CESQ", r, 1000))  { parseCesq(r); LteRate::setSignal(status().rsrpDbm); }
     if (PPP.cmd("AT+COPS?", r, 3000)) parseCops(r);
     if (PPP.cmd("AT+CEREG?", r, 1000)) parseCereg(r);
     return true;

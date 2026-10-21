@@ -22,8 +22,18 @@ static uint8_t  s_badRun = 0, s_warnRun = 0;    // järjestikused halvad mõõtm
 static uint32_t s_winAt = 0, s_winBytes = 0, s_winFrames = 0;
 static float    s_sentKBps = 0, s_fps = 0;
 
+static float s_cap = LTE_RATE_CAP_WEAK_KBPS;  // eelarve lagi (levi järgi)
+static float s_rsrp = 0;                      // RSRP libisev keskmine, 0 = teadmata
+
+static float capFor(float rsrp) {
+    if (rsrp == 0) return LTE_RATE_CAP_WEAK_KBPS;
+    if (rsrp >= LTE_RATE_RSRP_GOOD) return LTE_RATE_CAP_GOOD_KBPS;
+    if (rsrp >= LTE_RATE_RSRP_MID) return LTE_RATE_CAP_MID_KBPS;
+    return LTE_RATE_CAP_WEAK_KBPS;
+}
+
 static float clampRate(float r) {
-    return r < LTE_RATE_MIN_KBPS ? LTE_RATE_MIN_KBPS : (r > LTE_RATE_MAX_KBPS ? LTE_RATE_MAX_KBPS : r);
+    return r < LTE_RATE_MIN_KBPS ? LTE_RATE_MIN_KBPS : (r > s_cap ? s_cap : r);
 }
 
 static float capBytes() { return s_rate * 1024.0f * LTE_RATE_BURST_S; }
@@ -73,6 +83,8 @@ void reset(uint32_t localIp, int rsrpDbm) {
     if (rsrpDbm) start = rsrpDbm >= -95 ? 45 : (rsrpDbm >= -105 ? 30 : 20);
     portENTER_CRITICAL(&s_mux);
     s_ip = localIp;
+    s_rsrp = rsrpDbm;
+    s_cap = capFor(s_rsrp);
     s_rate = clampRate(start);
     s_refillAt = millis();
     s_tokens = capBytes();
@@ -80,6 +92,20 @@ void reset(uint32_t localIp, int rsrpDbm) {
     s_holdUntil = s_lastCut = 0;
     portEXIT_CRITICAL(&s_mux);
     if (localIp) LOGI(TAG, "LTE vaatajate algeelarve %.0f kB/s (RSRP %d dBm)", start, rsrpDbm);
+}
+
+void setSignal(int rsrpDbm) {
+    if (!rsrpDbm) return;
+    float before, after;
+    portENTER_CRITICAL(&s_mux);
+    s_rsrp = s_rsrp == 0 ? rsrpDbm : s_rsrp * 0.7f + rsrpDbm * 0.3f;   // ~30 s keskmine
+    before = s_cap;
+    s_cap = capFor(s_rsrp);
+    after = s_cap;
+    if (s_rate > s_cap) s_rate = s_cap;
+    const float avg = s_rsrp;
+    portEXIT_CRITICAL(&s_mux);
+    if (before != after) LOGI(TAG, "LTE eelarve lagi %.0f → %.0f kB/s (RSRP keskmine %.0f dBm)", before, after, avg);
 }
 
 bool isLteSocket(int fd) {
@@ -187,6 +213,8 @@ Status status() {
     portENTER_CRITICAL(&s_mux);
     st.active = activeLocked(now);
     st.budgetKBps = s_rate;
+    st.capKBps = s_cap;
+    st.rsrpDbm = (int)s_rsrp;
     st.sentKBps = st.active ? s_sentKBps : 0;
     st.fps = st.active ? s_fps : 0;
     st.rttMs = s_rtt;
