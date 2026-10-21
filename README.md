@@ -50,7 +50,16 @@ release'ist (FOTA)**.
 * **WiFi klient + hotspot korraga.** Hotspotiga ühendudes avaneb telefonis
   kaamera leht ise (captive portal, testitud Samsung S24+).
 * **LTE** (PPPoS, CMUX): PIN, APN, levi (CSQ/RSRP/RSRQ), automaatne taasühendus,
-  SIM-kaardi PIN-koodi muutmine veebiliidesest (`AT+CPWD`).
+  SIM-kaardi PIN-koodi muutmine veebiliidesest (`AT+CPWD`). Modemi info süsteemi
+  kaardil: temperatuur, toitepinge, sagedusala/EARFCN/SINR, lahter, IMEI/ICCID (v1.11.0).
+* **LTE kohanduv kaadrisagedus (v1.11.0):** LTE kaudu vaatajatele saadetakse kaader
+  ainult ühise saatmiseelarve piires – kaadrisagedus järgib LTE läbilaset, vt
+  [Ribalaius (LTE)](#ribalaius-lte).
+* **GPS (v1.11.0):** asukoht modemi GNSS-ist käivitusel ja kord tunnis, kaardilink
+  seadete lehel, `/api/gps` – vt [GPS](#gps).
+* **HTTPS (v1.11.0):** isetehtud sertifikaat (luuakse seadmes), port 443; internetist
+  tulevad `http://` päringud suunatakse `https://` peale – vt [Turvalisus](#turvalisus).
+* **Seletused:** seadete lehel iga parameetri järel ⓘ (hiirega vihje, telefonis vajutus).
 * **Failsafe:** kui WiFi klient ja LTE on seadetes mõlemad väljas, jääb hotspot alati
   sisse; kui seadmel pole 2 minutit ühtegi võrguühendust, lülitub hotspot ajutiselt
   ise sisse (ja pärast ühenduse taastumist välja).
@@ -101,8 +110,8 @@ tagasi, jätab seade selle versiooni meelde ega proovi seda automaatselt uuesti
 ### Uue versiooni väljaandmine
 
 ```bash
-git tag v1.8.4
-git push origin v1.8.4
+git tag v1.11.0
+git push origin v1.11.0
 ```
 
 GitHub Actions (`.github/workflows/firmware.yml`) ehitab püsivara (versioon võetakse
@@ -354,15 +363,43 @@ Seadme logi näeb ilma USB-kaablita: ⚙ → **📄 Logi** (`http://<IP>/log`).
 
 ## Ribalaius (LTE)
 
-Modem on ESP32-ga ühendatud **UART-i** kaudu, seega piirab läbilaskevõimet UART:
+Modem on ESP32-ga ühendatud **UART-i** kaudu (921600 baudi, ~85 kB/s), aga tegelik
+piir on tavaliselt **LTE üleslaadimine**: nõrga levi juures (RSRP ~−110 dBm) mõõdeti
+~40–55 kB/s. UART-il pole voojuhtimist (RTS/CTS) – kui ESP saadab kiiremini, kui LTE
+üles jõuab, täitub modemi puhver ja modem jääb kinni (veeb/RTSP ei vasta, olek
+CONNECTED). 3 Mbaud UART ega CMUX-ita DATA režiim seda ei parandanud.
 
-| UART kiirus | Umbes kasulik  | SVGA JPEG (~15–40 kB) |
-|-------------|----------------|-----------------------|
-| 115200      | ~11 kB/s       | ~0,3–0,7 FPS          |
-| 921600      | ~85 kB/s       | ~2–5 FPS              |
-| 3000000*    | ~250 kB/s      | ~6–15 FPS             |
+Seepärast (v1.11.0):
 
-\* kui modem toetab (`MODEM_BAUD_TARGET`, SIM7600 toetab).
+* **Ühine saatmiseelarve** kõigile LTE kaudu vaatajatele (RTSP, RTSP push, veebi
+  pildivoog; heli arvestatakse eelarvest). Kaader saadetakse ainult eelarve piires –
+  kaadrisagedus = eelarve / kaadri suurus. WiFi vaatajaid see ei puuduta.
+* **Eelarve kohandub ise** (AIMD): modemi `AT` vastamisaeg mõõdetakse voo ajal iga 2 s
+  (kasvab, kui järjekord täitub) → vähendamine; TCP kaadri saatmine > 2,5 s →
+  vähendamine; muidu tõuseb +1 kB/s.
+* **Lagi sõltub levist** (RSRP libisev keskmine): ≥ −95 dBm → 70 kB/s, ≥ −105 → 55 kB/s,
+  halvem → 45 kB/s. NB! seadete lehel on näha nii RSSI kui RSRP – lagi on RSRP järgi.
+* **LTE kaudu ainult RTP/TCP:** kui LTE klient küsib RTSP SETUP-is UDP-d, vastatakse
+  `461` ja klient (VLC, Synology, Milestone) läheb ise üle TCP-le. UDP ajas modemi
+  testides 13–30 s jooksul kinni ka 25 kB/s juures.
+* **Kinnijäämise taastamine:** kui modem ei vasta ~8 s (voo ajal) / ~40 s, luuakse
+  ühendus uuesti (CMUX close-down, vajadusel PWRKEY) – tavaliselt ~1 min.
+
+Mõõdetud (RSRP −102…−110): 15 min pidev VLC voog – 38 kB/s, 0,9 FPS (SVGA ~40 kB
+kaader), kinnijäämisi 0. Rohkem kaadreid → väiksem resolutsioon (VGA ~2 FPS) või
+parem antenni asukoht.
+
+## GPS
+
+SIM7600G-H modemi GNSS (`AT+CGPS`). Asukoht uuendatakse **käivitusel ja seejärel
+kord tunnis**: GNSS lülitub sisse, pärast esimest asukohta täpsustatakse 30 s ja
+lülitatakse välja (max 5 min otsingut). Vahepeal GPS AT-käske ei saadeta.
+
+* Seadete lehel kaart „📍 Asukoht (GPS)" – koordinaadid, kõrgus, kiirus,
+  satelliidid, aeg, **🗺 Ava kaardil** (OpenStreetMap).
+* `GET /api/gps` – JSON (`lat`, `lon`, `alt`, `sats`, `age_s`, `next_s` …).
+* Lüliti: ⚙ → 🌐 Võrk → LTE → „GPS sees". Vajab LTE-d (CMUX) ja GNSS antenni.
+* Esimene asukoht tavaliselt 5–50 s (vaba taevas).
 
 ## Turvalisus
 
@@ -374,6 +411,15 @@ Modem on ESP32-ga ühendatud **UART-i** kaudu, seega piirab läbilaskevõimet UA
   RTSP paroolinõude saab kohtvõrgu jaoks välja lülitada (⚙ → RTSP ja parool) – siis
   töötab ka `rtsp://<IP>:554/live`.
 * Vale parooli korral 0,8 s viivitus.
+* **HTTPS (v1.11.0):** port 443, ECDSA P-256 isetehtud sertifikaat luuakse seadmes
+  esimesel käivitusel ja hoitakse NVS-is (privaatvõti pole kunagi koodis). Brauser
+  näitab esimesel korral hoiatust – võrdle sertifikaadi SHA-256 sõrmejälge seadete
+  lehega (🔒 Turvalisus) ja vali „Jätka". Internetist (LTE) tulevad `http://`
+  päringud suunatakse `https://` peale; kodu-WiFi ja hotspot jäävad HTTP-le
+  (captive portal). „Loo uus sertifikaat" → uus võti, seade taaskäivitub.
+  TLS mälu on PSRAM-is; kuni 3 HTTPS ühendust korraga.
+* **RTSP (554) on krüpteerimata** – ka RTSP parool liigub avatekstina (salvestid ei
+  toeta RTSPS-i). Avaliku IP korral kasuta tugevat parooli.
 * SIM PIN on ainult kirjutatav (veebiliides seda ei näita). Kui SIM lükkab PIN-i
   tagasi, seda PIN-i enam ei proovita (kaitse PUK-lukustuse eest).
 
@@ -462,7 +508,9 @@ SimCam/
     ├── rtsp_server.*         RTSP/RTP-JPEG server
     ├── web_ui.*, web_page.h  HTTP server, API, lehed (vaade / seaded / login)
     ├── wifi_manager.*        WiFi klient + hotspot + captive DNS + mDNS
-    ├── modem_lte.*           LTE: PWRKEY, PIN, APN, PPP/CMUX, taastamine
+    ├── modem_lte.*           LTE: PWRKEY, PIN, APN, PPP/CMUX, taastamine, GPS, modemi info
+    ├── lte_rate.*            LTE vaatajate kohanduv saatmiseelarve
+    ├── https_cert.*          isetehtud HTTPS sertifikaat (NVS), TLS mälu PSRAM-ist
     ├── ota.*                 FOTA GitHubi release'ist + tagasipööramine
     ├── battery.*             aku pinge (GPIO3), täituvus, olek, ajalugu
     ├── audio.*               mikrofon (PDM), heli ringpuhver, G.711 kodeerija
