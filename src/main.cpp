@@ -94,13 +94,17 @@ void loop() {
         Battery::Status b = Battery::status();
         char bat[48] = "";
         if (b.enabled) snprintf(bat, sizeof(bat), " | aku %.2f V %d%% %s", b.voltage, b.percent, Battery::stateName(b.state));
-        char gps[120] = "";
+        char gps[160] = "";
         if (LTE::enabled() && Settings::get().gpsEnabled) {
             LTE::Gps g = LTE::gps();
             if (g.active && !g.fix) snprintf(gps, sizeof(gps), " | GPS otsin");
             else if (g.fixAtMs) snprintf(gps, sizeof(gps), " | GPS %.5f,%.5f (%lu min)", g.lat, g.lon,
                                          (unsigned long)((millis() - g.fixAtMs) / 60000));
             else snprintf(gps, sizeof(gps), " | GPS -");
+        }
+        if (LTE::enabled() && m.tempC > -999) {
+            size_t l = strlen(gps);
+            snprintf(gps + l, sizeof(gps) - l, " | modem %d°C %.2f V", m.tempC, m.vbat);
         }
         const LteRate::Status rs = LteRate::status();
         if (rs.active) {

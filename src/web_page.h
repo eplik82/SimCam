@@ -226,6 +226,9 @@ details form{margin-top:8px}
 .tab[hidden],details[hidden]{display:none}
 small.mut{color:var(--mut);font-size:12px}
 details summary{margin-top:10px}
+.hlp{display:inline-block;margin-left:5px;color:var(--mut);cursor:help;font-size:12px;line-height:1;user-select:none}
+.hlp:hover,.hlp:focus{color:var(--fg);outline:none}
+.toast{max-width:min(92vw,560px);text-align:center;line-height:1.4}
 </style></head><body>
 <header><a class="btn" href="/">← Vaade</a><h1>{{NAME}} – seaded</h1><span id="hdr"><span class="dot"></span>…</span></header>
 <main>
@@ -284,6 +287,12 @@ details summary{margin-top:10px}
   <div class="row"><span>RAM vaba</span><span id="s_ram">-</span></div>
   <div class="row"><span>PSRAM vaba</span><span id="s_ps">-</span></div>
   <div class="row"><span>Temperatuur</span><span id="s_t">-</span></div>
+  <div class="row"><span>Modem</span><span id="s_mod">-</span></div>
+  <div class="row"><span>Modemi temperatuur</span><span id="s_mt">-</span></div>
+  <div class="row"><span>Modemi toitepinge</span><span id="s_mv">-</span></div>
+  <div class="row"><span>LTE sagedusala / SINR</span><span id="s_band">-</span></div>
+  <div class="row"><span>Lahter</span><span id="s_cell">-</span></div>
+  <div class="row"><span>IMEI / ICCID</span><span id="s_ids">-</span></div>
   <div class="row"><span>Püsivara</span><span id="s_fw">-</span></div>
   <div class="row"><span>Viimane käivitus</span><span id="s_rst">-</span></div>
   <div class="row"><span>Logi</span><span id="s_log">-</span></div>
@@ -418,7 +427,7 @@ details summary{margin-top:10px}
 <script src="/audio.js"></script>
 <script>
 const $=id=>document.getElementById(id);
-function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),3000)}
+let toastT;function toast(t,ms){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.remove('show'),ms||3000)}
 async function api(u,o){const r=await fetch(u,o);if(r.status==401){location.href='/login';throw 0}return r}
 const form=o=>({method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(o)});
 function dur(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
@@ -577,7 +586,14 @@ async function poll(){
   $('c_af').textContent=c.af;$('c_rot').textContent=c.rotate+'°';
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
-  $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;
+  $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent='ESP32 '+s.temp.toFixed(1)+' °C';
+  const mo=m.state!='DISABLED',bn=(m.band||'-').replace('EUTRAN-BAND','B');
+  $('s_mod').textContent=mo&&m.model!='-'?`${m.model}${m.mfw&&m.mfw!='-'?' · '+m.mfw:''}`:'-';
+  $('s_mt').innerHTML=mo&&m.mtemp>-999?`<span class="dot ${m.mtemp>=70?'bad':m.mtemp>=60?'warn':'ok'}"></span>${m.mtemp} °C`:'-';
+  $('s_mv').textContent=mo&&m.mvbat>0?m.mvbat.toFixed(2)+' V':'-';
+  $('s_band').textContent=mo&&bn!='-'?`${bn} · EARFCN ${m.earfcn}${m.sinr>-999?' · SINR '+m.sinr+' dB':''}`:'-';
+  $('s_cell').textContent=mo&&m.cell&&m.cell!='-'?m.cell:'-';
+  $('s_ids').textContent=mo&&m.imei!='-'?`${m.imei} / ${m.iccid||'-'}`:'-';$('s_fw').textContent=s.fw;
   showBat(d.bat);showMic(d.mic);showPush(d.push);showGps(d.gps);showRate(d.lterate);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
  }catch(e){if(e!==0)$('hdr').innerHTML='<span class="dot bad"></span>Seade ei vasta'}
  setTimeout(poll,3000)}
@@ -620,6 +636,77 @@ $('f_bat_en').onchange=()=>batSave({en:$('f_bat_en').checked?1:0},$('f_bat_en').
 $('fBat').onsubmit=e=>{e.preventDefault();const v=$('f_bat_v').value.trim();if(!v){toast('Sisesta mõõdetud pinge');return}
  batSave({v},'Kalibreeritud').then(o=>{if(o)$('f_bat_v').value=''})};
 $('bCalReset').onclick=e=>{e.preventDefault();batSave({reset_cal:1},'Kalibreering lähtestatud')};
+// Parameetrite seletused: ⓘ nime järel – hiirega peale minnes vihje, telefonis vajutus näitab teatena
+const HELP={
+ c_res:'Kaamera sensori mudel ja praegune pildi resolutsioon (muudetav allpool kaamera seadetes).',
+ c_fps:'Kaadrite arv sekundis, mida kaamera teeb, ja ühe JPEG-kaadri suurus. Kui keegi ei vaata, on kaamera ooterežiimis (0 fps).',
+ c_af:'Autofookuse olek. „focused“ = pilt on teravustatud.',
+ c_rot:'Pildi pööre (0° või 180°).',
+ c_cli:'Praegu ühendatud vaatajad: RTSP (VLC, Synology, Milestone) / veebi pildivoog.',
+ w_sta:'WiFi klient: kodu-WiFi võrk, millega kaamera ühendub.',
+ w_ip:'Kaamera IP-aadress WiFi võrgus ja WiFi signaal (dBm): −50 väga hea, −70 hea, −80 nõrk.',
+ w_ap:'Kaamera enda WiFi (hotspot): nimi, aadress ja ühendatud seadmete arv. „failsafe“ = lülitus ise sisse, sest muu ühendus puudub.',
+ m_state:'LTE modemi olek: POWER_ON → AT_INIT → ATTACHING → CONNECTING → CONNECTED. RECOVERING = ühendust taastatakse.',
+ m_op:'Operaator ja levi. RSSI = kogu vastuvõetud võimsus koos müraga. RSRP = oma masti signaal, ennustab andmekiirust: −80 väga hea, −95 hea, −105 keskmine, −115 nõrk.',
+ m_ip:'Operaatorilt saadud avalik IP-aadress – sellega pääseb kaamerale ligi internetist (veeb ja RTSP).',
+ m_rate:'LTE kaudu vaatajatele saadetav pilt: tegelik kiirus, kaadrisagedus, eelarve/lagi ja modemi vastamisaeg. Eelarve kohandub ise LTE läbilaskega, lagi sõltub levist (RSRP). Vastamisaja kasv = ühendus hakkab ummistuma.',
+ m_err:'Viimane LTE viga, kui on.',
+ g_st:'GPS asukoht uueneb käivitusel ja seejärel kord tunnis; vahepeal on GNSS väljas (säästab akut ja modemit).',
+ g_pos:'Viimane teadaolev asukoht (laius, pikkus; WGS84 kraadid).',
+ g_alt:'Kõrgus merepinnast ja liikumiskiirus asukoha mõõtmise hetkel.',
+ g_sat:'Asukoha arvutamiseks kasutatud satelliite (GPS + GLONASS + BeiDou). Rohkem = täpsem.',
+ g_utc:'Satelliitidelt saadud kellaaeg (UTC) viimase asukoha ajal.',
+ b_v:'Aku pinge: täis ~4,2 V, tühi ~3,3 V. Laadimise ajal on näit tegelikust kõrgem.',
+ b_sl:'Pinge muutus 10 minutiga – selle järgi arvatakse, kas aku laeb või tühjeneb.',
+ b_left:'Hinnanguline tööaeg praeguse tühjenemiskiiruse juures.',
+ b_usb:'Kas plaat on USB kaudu arvutiga ühendatud (andmeühendus, mitte ainult laadija).',
+ s_up:'Aeg viimasest taaskäivitusest.',
+ s_ram:'Vaba sisemine mälu / kokku. Alla ~40 kB võib seade muutuda ebastabiilseks.',
+ s_ps:'Vaba PSRAM (lisamälu kaamerakaadrite jaoks) / kokku.',
+ s_t:'ESP32-S3 protsessori sisetemperatuur (umbkaudne).',
+ s_mod:'LTE modemi mudel ja selle püsivara versioon.',
+ s_mt:'Modemi sisetemperatuur. Normaalne kuni ~60 °C, üle 70 °C hoiatus logis; modemi piir on ~85 °C.',
+ s_mv:'Modemi toitepinge (mõõdab modem ise). SIM7600 vajab 3,4–4,2 V; madal pinge võib ühenduse katkestada.',
+ s_band:'LTE sagedusala (B3 = 1800 MHz, B7 = 2600, B20 = 800), kanal (EARFCN) ja SINR – signaali ja müra suhe: üle 13 dB väga hea, 0–13 keskmine, alla 0 halb.',
+ s_cell:'Mobiilimasti lahtri ID, millega modem on ühendatud.',
+ s_ids:'Modemi IMEI ja SIM-kaardi ICCID (SIM-kaardi number).',
+ s_fw:'SimCam püsivara versioon.',
+ s_rst:'Viimase taaskäivituse põhjus (nt toide, tarkvara, watchdog).',
+ s_log:'Hoiatuste ja vigade arv logis alates käivitusest.',
+ af_pos_t:'Läätse asend käsitsi fookuse režiimis: väiksem = kaugele, suurem = lähedale.',
+ push_st:'Kas pilt saadetakse välisesse RTSP serverisse (nt MediaMTX).',
+ push_rate:'Push-voo kaadrisagedus ja kiirus.',
+ m_lvl_t:'Mikrofoni helitase.',
+ o_cur:'Seadmes praegu töötav püsivara.',
+ o_lat:'Uusim püsivara GitHubis.',
+ o_st:'Püsivara uuenduse olek.',
+ f_cam_name:'Nimi pealehel, brauseri vahelehel, sisselogimisel, logis ja RTSP voo nimena.',
+ f_fs:'Pildi resolutsioon. LTE kaudu: väiksem pilt = rohkem kaadreid sekundis, sest eelarve on kB/s.',
+ f_bat_en:'Lülita välja, kui plaadil pole akut – siis aku olekut ei näidata.',
+ f_sta_en:'Kaamera ühendub kodu-WiFi võrku (lisaks LTE-le).',
+ f_sta_pass:'WiFi võrgu parool. Tühi = jääb muutmata.',
+ f_ap_en:'Kaamera enda WiFi seadistamiseks. Lülitub ise sisse, kui muu ühendus puudub.',
+ f_ap_ssid:'Kaamera hotspoti nimi.',
+ f_ap_pass:'Hotspoti parool, vähemalt 8 märki. Tühi = jääb muutmata.',
+ f_lte_en:'Mobiilivõrgu modem. Muudatus rakendub pärast taaskäivitust.',
+ f_apn:'Operaatori andmeside pääsupunkt (APN), nt staatilise IP jaoks operaatori antud APN.',
+ f_pin:'SIM-kaardi PIN. Vale PIN-i ei proovita teist korda (kaitse PUK-lukustuse eest).',
+ f_pin_clear:'Märgi, kui SIM-kaardil on PIN-kood välja lülitatud.',
+ f_gps_en:'Modemi GPS: asukoht käivitusel ja kord tunnis. Vajab LTE-d ja GNSS antenni.',
+ f_rtsp_auth:'RTSP voog nõuab kasutajat „admin“ ja veebiliidese parooli. Soovitatav sees, eriti avaliku LTE IP puhul.',
+ f_push_en:'Kaamera saadab pildi ise välisesse RTSP serverisse (nt MediaMTX) – ei vaja avalikku IP-d.',
+ f_push_url:'Serveri RTSP aadress, nt rtsp://server:8554/kaamera (ilma kasutaja ja paroolita).',
+ f_push_user:'Push-serveri kasutajanimi (kui server nõuab).',
+ f_push_pass:'Push-serveri parool. Tühi = jääb muutmata.',
+ f_mic_en:'Mikrofon ja heli RTSP voos. LTE puhul vali G.711 – see võtab ~8 kB/s pildi eelarvest (L16 ~32 kB/s).',
+};
+function helpInit(){for(const[id,t]of Object.entries(HELP)){const e=$(id);if(!e)continue;
+ const row=e.closest('.row'),l=row?row.firstElementChild:e.closest('label');if(!l||l.querySelector('.hlp'))continue;
+ const i=document.createElement('span');i.className='hlp';i.textContent='ⓘ';i.title=t;i.tabIndex=0;i.setAttribute('role','button');i.setAttribute('aria-label',t);
+ i.onclick=ev=>{ev.preventDefault();ev.stopPropagation();toast(t,Math.max(3000,t.length*60))};
+ i.onkeydown=ev=>{if(ev.key=='Enter'||ev.key==' ')i.onclick(ev)};
+ if(row||l.classList.contains('chk'))l.appendChild(i);else l.insertBefore(i,l.firstChild.nextSibling)}}
+helpInit();
 loadCfg();poll();otaPoll();batPoll();
 </script></body></html>)HTML";
 

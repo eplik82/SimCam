@@ -276,6 +276,51 @@ static void parseCereg(const String &r) {
     ST_UNLOCK();
 }
 
+// "+PREFIX: väärtus" → väärtus (esimene rida, mis prefiksiga algab)
+static String lineValue(const String &r, const char *prefix) {
+    int p = r.indexOf(prefix);
+    if (p < 0) return "";
+    p += strlen(prefix);
+    int e = r.indexOf('\n', p);
+    String v = r.substring(p, e < 0 ? r.length() : e);
+    v.trim();
+    return v;
+}
+
+// +CPMUTEMP: 38
+static void parseTemp(const String &r) {
+    String v = lineValue(r, "+CPMUTEMP:");
+    if (!v.length()) return;
+    int t = v.toInt();
+    static bool warned = false;
+    ST_LOCK(); s_st.tempC = t; ST_UNLOCK();
+    if (t >= MODEM_TEMP_WARN_C && !warned) { warned = true; LOGW(TAG, "Modemi temperatuur kõrge: %d °C", t); }
+    if (t < MODEM_TEMP_WARN_C - 5) warned = false;
+}
+
+// +CBC: 4.072V
+static void parseCbc(const String &r) {
+    String v = lineValue(r, "+CBC:");
+    if (!v.length()) return;
+    float u = v.toFloat();
+    if (u > 1000) u /= 1000.0f;                  // mõni püsivara annab mV
+    ST_LOCK(); s_st.vbat = u; ST_UNLOCK();
+}
+
+// +CPSI: LTE,Online,248-01,0x1A2B,12345678,123,EUTRAN-BAND3,1300,5,5,-94,-1035,-713,14
+//        süsteem,olek,MCC-MNC,TAC,lahter,PCI,sagedusala,EARFCN,dlbw,ulbw,RSRQ,RSRP,RSSI,RSSNR
+static void parseCpsi(const String &r) {
+    String f[14];
+    int n = fieldsAfter(r, "+CPSI:", f, 14);
+    if (n < 8 || f[0] != "LTE") return;
+    ST_LOCK();
+    strlcpy(s_st.band, f[6].c_str(), sizeof(s_st.band));
+    s_st.earfcn = f[7].toInt();
+    strlcpy(s_st.cellId, f[4].c_str(), sizeof(s_st.cellId));
+    s_st.sinrDb = n >= 14 && f[13].length() ? f[13].toInt() : -999;
+    ST_UNLOCK();
+}
+
 // =============================================================================
 //  GPS (modemi GNSS) – SIM7600: AT+CGPS, AT+CGPSINFO, AT+CGNSSINFO
 // =============================================================================
@@ -526,6 +571,11 @@ static int atInit() {
         r.trim();
         ST_LOCK(); strlcpy(s_st.model, r.c_str(), sizeof(s_st.model)); ST_UNLOCK();
     }
+    if (atCmd("AT+CGMR", &r)) {
+        String v = lineValue(r, "+CGMR:");
+        if (!v.length()) { v = r; v.replace("OK", ""); v.trim(); }
+        ST_LOCK(); strlcpy(s_st.fwRev, v.c_str(), sizeof(s_st.fwRev)); ST_UNLOCK();
+    }
     if (atCmd("AT+CGSN", &r)) {
         String imei;
         for (char c : r) if (isDigit(c)) imei += c;
@@ -564,6 +614,11 @@ static int atInit() {
     atCmd("AT+COPS=3,0");               // operaatori nimi pikas tekstivormingus
     atCmd("AT+CEREG=0");                // lihtne CEREG vastuse formaat
     if (atCmd("AT+CSQ", &r)) parseCsq(r);
+    if (atCmd("AT+CICCID", &r)) {                // SIM on nüüd valmis
+        String v = lineValue(r, "+ICCID:");
+        ST_LOCK(); strlcpy(s_st.iccid, v.length() ? v.c_str() : "-", sizeof(s_st.iccid)); ST_UNLOCK();
+    }
+    if (atCmd("AT+CPMUTEMP", &r)) parseTemp(r);
     gpsSet(true, gpsWantedNow());       // GNSS käivitub juba enne PPP-d (asukoha otsing võtab aega)
 
     ST_LOCK(); s_st.baud = s_baud; ST_UNLOCK();
@@ -605,6 +660,9 @@ static bool pollModem() {
     if (PPP.cmd("AT+CESQ", r, 1000))  { parseCesq(r); LteRate::setSignal(status().rsrpDbm); }
     if (PPP.cmd("AT+COPS?", r, 3000)) parseCops(r);
     if (PPP.cmd("AT+CEREG?", r, 1000)) parseCereg(r);
+    if (PPP.cmd("AT+CPSI?", r, 1000))  parseCpsi(r);
+    if (PPP.cmd("AT+CPMUTEMP", r, 1000)) parseTemp(r);
+    if (PPP.cmd("AT+CBC", r, 1000))    parseCbc(r);
     return true;
 }
 

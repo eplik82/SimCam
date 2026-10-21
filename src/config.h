@@ -109,6 +109,7 @@
 #define LTE_MONITOR_PERIOD_MS    10000   // levi/staatuse päringute intervall
 #define LTE_LINK_LOST_GRACE_MS   30000   // kui kaua IP võib puududa enne taastamist
 #define LTE_REBOOT_AFTER_MS    900000UL  // 15 min ilma ühenduseta → ESP restart
+#define MODEM_TEMP_WARN_C         70     // modemi temperatuur üle selle → hoiatus logis
 #define LTE_AT_FAIL_LIMIT          4     // järjest vastamata signaalipäringut (×10 s) → taastamine
 
 // LTE vaatajate saatmiseelarve (vt lte_rate.h): kaadrisagedus kohandub LTE läbilaskega.

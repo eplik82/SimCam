@@ -39,6 +39,14 @@ struct Status {
     char     tech[12] = "-";         // LTE / UMTS / GSM
     char     model[32] = "-";
     char     imei[20] = "-";
+    char     fwRev[40] = "-";         // modemi püsivara (AT+CGMR)
+    char     iccid[24] = "-";         // SIM-kaardi ICCID
+    int      tempC = -999;            // modemi temperatuur (AT+CPMUTEMP), -999 = teadmata
+    float    vbat = 0;                // modemi toitepinge V (AT+CBC), 0 = teadmata
+    char     band[20] = "-";          // sagedusala, nt "EUTRAN-BAND3" (AT+CPSI)
+    int      earfcn = 0;
+    int      sinrDb = -999;           // RSSNR/SINR dB, -999 = teadmata
+    char     cellId[16] = "-";        // teenindava lahtri ID
     char     lastError[96] = "";
     int      csq = 99;               // 0..31, 99 = teadmata
     int      rssiDbm = 0;            // 0 = teadmata

@@ -374,7 +374,9 @@ static esp_err_t h_battery_post(httpd_req_t *req) {
 static esp_err_t h_status(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     LTE::Status m = LTE::status();
-    char op[64], err[200], model[64];
+    char op[64], err[200], model[64], fwr[90], band[44];
+    jsonEsc(fwr, sizeof(fwr), m.fwRev);
+    jsonEsc(band, sizeof(band), m.band);
     jsonEsc(op, sizeof(op), m.op);
     jsonEsc(err, sizeof(err), m.lastError);
     jsonEsc(model, sizeof(model), m.model);
@@ -395,7 +397,9 @@ static esp_err_t h_status(httpd_req_t *req) {
         "\"lte\":{\"enabled\":%s,\"state\":\"%s\",\"connected\":%s,\"ip\":\"%s\","
         "\"operator\":\"%s\",\"tech\":\"%s\",\"csq\":%d,\"rssi\":%d,"
         "\"rsrp\":%d,\"rsrq\":%.1f,\"reg\":%d,\"model\":\"%s\",\"imei\":\"%s\","
-        "\"baud\":%lu,\"cmux\":%s,\"conn_s\":%lu,\"reconnects\":%lu,\"error\":\"%s\"},"
+        "\"baud\":%lu,\"cmux\":%s,\"conn_s\":%lu,\"reconnects\":%lu,\"error\":\"%s\","
+        "\"mfw\":\"%s\",\"iccid\":\"%s\",\"mtemp\":%d,\"mvbat\":%.2f,\"band\":\"%s\",\"earfcn\":%d,"
+        "\"sinr\":%d,\"cell\":\"%s\"},"
         "\"cam\":{\"sensor\":\"%s\",\"res\":\"%s\",\"fps\":%.2f,\"frame_kb\":%.1f,"
         "\"af\":\"%s\",\"af_ok\":%s,\"consumers\":%d,\"rotate\":%d},"
         "\"sys\":{\"uptime\":%llu,\"heap_free\":%u,\"heap_total\":%u,\"heap_min\":%u,"
@@ -409,6 +413,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         m.rsrpDbm, m.rsrqDb, m.regStat, model, m.imei,
         (unsigned long)m.baud, m.cmux ? "true" : "false", (unsigned long)connS,
         (unsigned long)m.reconnects, err,
+        fwr, m.iccid, m.tempC, m.vbat, band, m.earfcn, m.sinrDb, m.cellId,
         Camera::sensorName(), Camera::resolutionName(), Camera::fps(),
         Camera::lastFrameBytes() / 1024.0f, Camera::afStatus(),
         Camera::afSupported() ? "true" : "false", Camera::consumers(), Camera::rotation(),
