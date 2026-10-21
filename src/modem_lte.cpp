@@ -121,16 +121,20 @@ static bool atCmd(const char *cmd, String *out = nullptr, uint32_t timeoutMs = 1
 
 // Proovi modemiga rääkida sihtkiirusel ja vaikekiirusel.
 static bool modemResponds() {
-    const uint32_t bauds[] = {MODEM_BAUD_TARGET, MODEM_BAUD_DEFAULT};
-    for (uint32_t b : bauds) {
+    // ka varem kasutatud kiirused: modem võib eelmise püsivara AT+IPR väärtust mäletada
+    const uint32_t bauds[] = {MODEM_BAUD_TARGET, 921600, 3000000, MODEM_BAUD_DEFAULT};
+    for (size_t i = 0; i < sizeof(bauds) / sizeof(bauds[0]); i++) {
+        const uint32_t b = bauds[i];
+        bool dup = false;
+        for (size_t k = 0; k < i; k++) dup |= bauds[k] == b;
+        if (dup) continue;
         serialOpen(b);
-        for (int i = 0; i < 3; i++) {
+        for (int n = 0; n < 3; n++) {
             if (atCmd("AT", nullptr, 300, true)) {
                 LOGI(TAG, "Modem vastab @ %lu baud", (unsigned long)b);
                 return true;
             }
         }
-        if (MODEM_BAUD_TARGET == MODEM_BAUD_DEFAULT) break;
     }
     return false;
 }
