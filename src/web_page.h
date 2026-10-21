@@ -338,7 +338,7 @@ details summary{margin-top:10px}
     <label class="chk"><input type="checkbox" id="f_pin_clear"> SIM-il pole PIN-i</label>
     <label class="chk"><input type="checkbox" id="f_gps_en"> GPS sees (modemi GNSS antenn) <small class="mut">– rakendub kohe</small></label>
     <div class="ipbox" id="lteIp">Mobiilivõrgu IP: –</div>
-    <div class="note">Ainult UART-modemiga (LilyGO T-PCIe SIM7600). MikroTik R11e-LTE puhul hoia väljas! LTE muudatused rakenduvad pärast taaskäivitust. GPS töötab ainult koos LTE-ga; esimene asukoht võib võtta mitu minutit ja vajab vaba taevast.</div>
+    <div class="note">Ainult UART-modemiga (LilyGO T-PCIe SIM7600). MikroTik R11e-LTE puhul hoia väljas! LTE muudatused rakenduvad pärast taaskäivitust. GPS töötab ainult koos LTE-ga ja uuendab asukohta käivitusel ning seejärel kord tunnis (vahepeal on GNSS väljas); asukoht vajab vaba taevast.</div>
    </div>
    <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
@@ -422,12 +422,13 @@ async function api(u,o){const r=await fetch(u,o);if(r.status==401){location.href
 const form=o=>({method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(o)});
 function dur(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
  return (d?d+'p ':'')+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
-function showGps(g){if(!g)return;let st,cls='warn';
+function showGps(g){if(!g)return;let st,cls='warn';const has=g.age_s>=0,nx=g.next_s>=0?`, järgmine ${dur(g.next_s)} pärast`:'';
  if(!g.enabled){st='väljas';cls=''}else if(g.note){st=g.note;cls='bad'}
- else if(!g.on)st=g.supported?'käivitub…':'ootan modemit…';else if(g.fix){st='asukoht olemas';cls='ok'}else st='otsin satelliite…';
+ else if(g.active)st=!g.on?'käivitub…':g.fix?'asukoht leitud, täpsustan…':'otsin satelliite…';
+ else if(has){st=`uuendatud ${dur(g.age_s)} tagasi${nx}`;cls='ok'}else st=g.supported?`asukohta ei leitud${nx}`:'ootan modemit…';
  $('g_st').innerHTML=`<span class="dot ${cls}"></span>`;$('g_st').append(st);
- const has=g.age_s>=0,la=g.lat.toFixed(6),lo=g.lon.toFixed(6);
- $('g_pos').textContent=has?`${la}, ${lo}`+(g.fix?'':` (${dur(g.age_s)} tagasi)`):'-';
+ const la=g.lat.toFixed(6),lo=g.lon.toFixed(6);
+ $('g_pos').textContent=has?`${la}, ${lo}`:'-';
  $('g_alt').textContent=has?`${g.alt.toFixed(0)} m · ${g.speed.toFixed(1)} km/h`:'-';
  $('g_sat').textContent=g.sats>=0?g.sats:'-';$('g_utc').textContent=g.utc||'-';
  const a=$('g_map');a.style.display=has?'':'none';if(has)a.href=`https://www.openstreetmap.org/?mlat=${la}&mlon=${lo}#map=17/${la}/${lo}`}

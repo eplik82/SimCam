@@ -109,11 +109,16 @@
 #define LTE_MONITOR_PERIOD_MS    10000   // levi/staatuse päringute intervall
 #define LTE_LINK_LOST_GRACE_MS   30000   // kui kaua IP võib puududa enne taastamist
 #define LTE_REBOOT_AFTER_MS    900000UL  // 15 min ilma ühenduseta → ESP restart
+#define LTE_AT_FAIL_LIMIT          4     // järjest vastamata signaalipäringut (×10 s) → taastamine
 
 // GPS (modemi GNSS, SIM7600: AT+CGPS / AT+CGPSINFO). Loetakse CMUX AT-kanali kaudu,
 // seega töötab ainult siis, kui LTE on seadetes sees ja modem toetab CMUX-i.
 #define GPS_ENABLED_DEFAULT       1
-#define GPS_POLL_MS            5000      // asukoha päringu intervall
+#define GPS_POLL_MS            5000      // asukoha päringu intervall uuenduse ajal
+// GNSS töötab ainult uuenduse ajal: käivitusel ja seejärel iga GPS_INTERVAL_MS järel
+#define GPS_INTERVAL_MS     3600000UL    // 1 h
+#define GPS_SETTLE_MS         30000      // pärast esimest asukohta täpsusta veel 30 s
+#define GPS_SESSION_MAX_MS   300000      // kui 5 min jooksul asukohta pole → proovi järgmisel korral
 
 // -----------------------------------------------------------------------------
 //  Kaamera

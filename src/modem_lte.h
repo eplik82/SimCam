@@ -62,6 +62,8 @@ struct Gps {
     int      sats = -1;              // kasutatud satelliite (-1 = teadmata)
     char     utc[24] = "";           // satelliidiaeg "2026-10-21 12:34:56"
     uint32_t fixAtMs = 0;            // viimase asukoha aeg (millis), 0 = pole kunagi olnud
+    bool     active = false;         // asukoha uuendus käib (GNSS sees)
+    uint32_t nextAtMs = 0;           // järgmise uuenduse aeg (millis), kui !active
     char     note[80] = "";          // miks GPS-i ei loeta (nt CMUX puudub)
 };
 

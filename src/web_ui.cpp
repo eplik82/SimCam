@@ -287,12 +287,14 @@ static String gpsJson() {
     const bool en = Settings::get().gpsEnabled && LTE::enabled();
     char note[170], j[460];
     jsonEsc(note, sizeof(note), g.note);
-    long age = g.fixAtMs ? (long)((millis() - g.fixAtMs) / 1000) : -1;
+    const uint32_t now = millis();
+    long age = g.fixAtMs ? (long)((now - g.fixAtMs) / 1000) : -1;
+    long next = (!g.active && g.nextAtMs) ? max(0L, (long)(int32_t)(g.nextAtMs - now) / 1000) : -1;
     snprintf(j, sizeof(j),
         "\"gps\":{\"enabled\":%s,\"supported\":%s,\"on\":%s,\"fix\":%s,\"lat\":%.6f,\"lon\":%.6f,"
-        "\"alt\":%.1f,\"speed\":%.1f,\"course\":%.0f,\"sats\":%d,\"utc\":\"%s\",\"age_s\":%ld,\"note\":\"%s\"}",
+        "\"alt\":%.1f,\"speed\":%.1f,\"course\":%.0f,\"sats\":%d,\"utc\":\"%s\",\"age_s\":%ld,\"active\":%s,\"next_s\":%ld,\"note\":\"%s\"}",
         en ? "true" : "false", g.supported ? "true" : "false", g.on ? "true" : "false", g.fix ? "true" : "false",
-        g.lat, g.lon, g.altM, g.speedKmh, g.course, g.sats, g.utc, age, note);
+        g.lat, g.lon, g.altM, g.speedKmh, g.course, g.sats, g.utc, age, g.active ? "true" : "false", next, note);
     return String(j);
 }
 

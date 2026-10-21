@@ -96,8 +96,10 @@ void loop() {
         char gps[64] = "";
         if (LTE::enabled() && Settings::get().gpsEnabled) {
             LTE::Gps g = LTE::gps();
-            if (g.fix) snprintf(gps, sizeof(gps), " | GPS %.5f,%.5f %d sat", g.lat, g.lon, g.sats);
-            else snprintf(gps, sizeof(gps), " | GPS %s", g.on ? "otsin" : "väljas");
+            if (g.active && !g.fix) snprintf(gps, sizeof(gps), " | GPS otsin");
+            else if (g.fixAtMs) snprintf(gps, sizeof(gps), " | GPS %.5f,%.5f (%lu min)", g.lat, g.lon,
+                                         (unsigned long)((millis() - g.fixAtMs) / 60000));
+            else snprintf(gps, sizeof(gps), " | GPS -");
         }
         LOGI(TAG, "WiFi=%s %s (%d dBm) AP=%d kl. | LTE=%s IP=%s op=%s CSQ=%d (%d dBm) RSRP=%d | cam %.1f fps %u kB AF=%s | "
                   "rtsp=%d web=%d | heap=%u psram=%u | %.1f°C%s%s",
