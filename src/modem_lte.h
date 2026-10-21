@@ -50,7 +50,23 @@ struct Status {
     uint32_t reconnects = 0;
 };
 
+// Modemi GNSS (SIM7600: AT+CGPS / AT+CGPSINFO). Loetakse LTE taskis CMUX AT-kanali kaudu.
+struct Gps {
+    bool     supported = false;      // modem vastas AT+CGPS? päringule
+    bool     on = false;             // GNSS mootor töötab
+    bool     fix = false;            // viimane päring andis asukoha
+    double   lat = 0, lon = 0;       // kraadid (WGS84), viimane teadaolev asukoht
+    float    altM = 0;               // kõrgus merepinnast (m)
+    float    speedKmh = 0;
+    float    course = 0;             // liikumissuund (°)
+    int      sats = -1;              // kasutatud satelliite (-1 = teadmata)
+    char     utc[24] = "";           // satelliidiaeg "2026-10-21 12:34:56"
+    uint32_t fixAtMs = 0;            // viimase asukoha aeg (millis), 0 = pole kunagi olnud
+    char     note[80] = "";          // miks GPS-i ei loeta (nt CMUX puudub)
+};
+
 void begin();                 // käivitab halduri taski (mitteblokeeriv)
+Gps gps();                    // lõimekindel koopia GPS olekust
 bool enabled();               // kas begin() on välja kutsutud
 Status status();              // lõimekindel koopia hetkeolekust
 bool connected();

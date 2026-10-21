@@ -15,6 +15,7 @@ struct Data {
     char apSsid[33];
     char apPass[65];
     bool lteEnabled;
+    bool gpsEnabled;          // modemi GPS/GNSS sees (vajab LTE-d)
     int  rotation;            // kaamerapildi pööre: 0 / 180
     bool mirror;              // peegelda pilt horisontaalselt (sensor hmirror)
     int  framesize;           // kaamera resolutsioon (esp32-camera framesize_t)

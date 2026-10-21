@@ -22,6 +22,7 @@ static void defaults(Data &d) {
     strlcpy(d.apSsid, WIFI_AP_SSID_DEFAULT, sizeof(d.apSsid));
     strlcpy(d.apPass, WIFI_AP_PASS_DEFAULT, sizeof(d.apPass));
     d.lteEnabled = LTE_ENABLED_DEFAULT;
+    d.gpsEnabled = GPS_ENABLED_DEFAULT;
     d.rotation = CAM_ROTATION_DEFAULT;
     d.mirror = CAM_MIRROR_DEFAULT;
     d.framesize = CAM_FRAME_SIZE;
@@ -69,6 +70,7 @@ void load() {
         if (p.isKey("ap_ssid")) p.getString("ap_ssid", d.apSsid, sizeof(d.apSsid));
         if (p.isKey("ap_pass")) p.getString("ap_pass", d.apPass, sizeof(d.apPass));
         d.lteEnabled = p.getBool("lte_en", d.lteEnabled);
+        d.gpsEnabled = p.getBool("gps_en", d.gpsEnabled);
         d.rotation = p.getShort("rot", d.rotation);
         // 90°/270° eemaldati v1.8.0-s: 270° → 180°, muu → 0° (muidu ei läbiks save() kontrolli)
         if (d.rotation != 0 && d.rotation != 180) d.rotation = d.rotation == 270 ? 180 : 0;
@@ -141,6 +143,7 @@ bool save(const Data &din) {
     p.putString("ap_ssid", d.apSsid);
     p.putString("ap_pass", d.apPass);
     p.putBool("lte_en", d.lteEnabled);
+    p.putBool("gps_en", d.gpsEnabled);
     p.putShort("rot", d.rotation);
     p.putString("sim_pin", d.simPin);
     p.putString("apn", d.apn);

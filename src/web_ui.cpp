@@ -281,6 +281,30 @@ static String micJson() {
     return String(j);
 }
 
+// GPS olek (modemi GNSS). Koordinaadid = viimane teadaolev asukoht, age_s = selle vanus.
+static String gpsJson() {
+    const LTE::Gps g = LTE::gps();
+    const bool en = Settings::get().gpsEnabled && LTE::enabled();
+    char note[170], j[460];
+    jsonEsc(note, sizeof(note), g.note);
+    long age = g.fixAtMs ? (long)((millis() - g.fixAtMs) / 1000) : -1;
+    snprintf(j, sizeof(j),
+        "\"gps\":{\"enabled\":%s,\"supported\":%s,\"on\":%s,\"fix\":%s,\"lat\":%.6f,\"lon\":%.6f,"
+        "\"alt\":%.1f,\"speed\":%.1f,\"course\":%.0f,\"sats\":%d,\"utc\":\"%s\",\"age_s\":%ld,\"note\":\"%s\"}",
+        en ? "true" : "false", g.supported ? "true" : "false", g.on ? "true" : "false", g.fix ? "true" : "false",
+        g.lat, g.lon, g.altM, g.speedKmh, g.course, g.sats, g.utc, age, note);
+    return String(j);
+}
+
+// GET /api/gps – ainult asukoht (nt Home Assistant / skriptide jaoks)
+static esp_err_t h_gps(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    String j = "{" + gpsJson() + "}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, j.c_str(), j.length());
+}
+
 static String batJson() {
     Battery::Status b = Battery::status();
     char j[260];
@@ -350,7 +374,7 @@ static esp_err_t h_status(httpd_req_t *req) {
     jsonEsc(staSsid, sizeof(staSsid), w.staSsid);
     jsonEsc(apSsid, sizeof(apSsid), w.apSsid);
 
-    static char buf[2800];                     // httpd käsitlejad jooksevad ühes taskis
+    static char buf[3600];                     // httpd käsitlejad jooksevad ühes taskis
     int n = snprintf(buf, sizeof(buf),
         "{\"wifi\":{\"sta_en\":%s,\"sta_ok\":%s,\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\","
         "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d,\"ap_temp\":%s},"
@@ -379,7 +403,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
         RtspServer::clients(), (int)s_streams, (Auth::enabled() && cfgd.rtspAuth) ? "true" : "false", ip, RTSP_PORT, RTSP_PATH,
         SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors(),
-        (batJson() + "," + micJson() + "," + pushJson()).c_str());
+        (batJson() + "," + micJson() + "," + pushJson() + "," + gpsJson()).c_str());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -603,7 +627,7 @@ static esp_err_t h_favicon(httpd_req_t *req) {
 static esp_err_t h_config_get(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
     Settings::Data d = Settings::get();
-    char ss[70], as[70], apn[130], nm[90], pu[330], pus[100], buf[2000];
+    char ss[70], as[70], apn[130], nm[90], pu[330], pus[100], buf[2300];
     jsonEsc(ss, sizeof(ss), d.staSsid);
     jsonEsc(pu, sizeof(pu), d.pushUrl);
     jsonEsc(pus, sizeof(pus), d.pushUser);
@@ -613,14 +637,14 @@ static esp_err_t h_config_get(httpd_req_t *req) {
     // Paroole ei saadeta kunagi välja – ainult info, kas need on määratud
     int n = snprintf(buf, sizeof(buf),
         "{\"cam_name\":\"%s\",\"sta_en\":%s,\"sta_ssid\":\"%s\",\"sta_has_pass\":%s,"
-        "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,"
+        "\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_has_pass\":%s,\"lte_en\":%s,\"gps_en\":%s,"
         "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s,"
         "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"rtsp_audio\":%s,"
         "\"push_en\":%s,\"push_url\":\"%s\",\"push_user\":\"%s\",\"push_has_pass\":%s,"
         "\"framesize\":%d,\"framesizes\":%s}",
         nm, d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
-        d.lteEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
+        d.lteEnabled ? "true" : "false", d.gpsEnabled ? "true" : "false", apn, d.simPin[0] ? "true" : "false",
         strcmp(d.webPass, WEB_PASS_DEFAULT) == 0 ? "true" : "false", d.rtspAuth ? "true" : "false",
         d.autoUpdate ? "true" : "false",
         d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.rtspAudio ? "true" : "false",
@@ -689,6 +713,7 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "ap_ssid", v, sizeof(v))) strlcpy(d.apSsid, v, sizeof(d.apSsid));
     if (formField(body, "ap_pass", v, sizeof(v)) && v[0]) strlcpy(d.apPass, v, sizeof(d.apPass));
     if (formField(body, "lte_en", v, sizeof(v))) d.lteEnabled = v[0] == '1';
+    if (formField(body, "gps_en", v, sizeof(v))) d.gpsEnabled = v[0] == '1';   // rakendub ~5 s jooksul
     if (formField(body, "apn", v, sizeof(v))) strlcpy(d.apn, v, sizeof(d.apn));
     if (formField(body, "sim_pin", v, sizeof(v)) && v[0]) strlcpy(d.simPin, v, sizeof(d.simPin));
     if (formField(body, "sim_pin_clear", v, sizeof(v)) && v[0] == '1') d.simPin[0] = 0;
@@ -974,6 +999,7 @@ bool begin() {
         {"/api/log/clear", HTTP_POST, h_log_clear, nullptr},
         {"/api/battery", HTTP_GET,  h_battery,      nullptr},
         {"/api/battery", HTTP_POST, h_battery_post, nullptr},
+        {"/api/gps",     HTTP_GET,  h_gps,          nullptr},
     };
     for (const auto &u : uris) httpd_register_uri_handler(s_server, &u);
     httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, h_notfound);

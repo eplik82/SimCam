@@ -21,6 +21,7 @@ namespace LTE {
 
 // --- Jagatud olek ----------------------------------------------------------
 static Status            s_st;
+static Gps               s_gps;
 static SemaphoreHandle_t s_mtx = nullptr;
 static volatile bool     s_hasIp = false;
 static volatile uint32_t s_ipLostAt = 0;
@@ -253,6 +254,113 @@ static void parseCereg(const String &r) {
 }
 
 // =============================================================================
+//  GPS (modemi GNSS) – SIM7600: AT+CGPS, AT+CGPSINFO, AT+CGNSSINFO
+// =============================================================================
+// AT-käsk kas otse UART-i (enne PPP-d) või CMUX käsukanali kaudu (PPP ajal)
+static bool gpsAt(bool raw, const char *cmd, String &r, uint32_t timeoutMs) {
+    if (raw) return atCmd(cmd, &r, timeoutMs);
+    return PPP.cmd(cmd, r, timeoutMs);
+}
+
+static void gpsNote(const char *msg) {
+    ST_LOCK();
+    bool changed = strcmp(s_gps.note, msg) != 0;
+    if (changed) strlcpy(s_gps.note, msg, sizeof(s_gps.note));
+    ST_UNLOCK();
+    if (changed && msg[0]) LOGW(TAG, "%s", msg);
+}
+
+// Lülita modemi GNSS sisse/välja vastavalt seadetele
+static void gpsApply(bool raw) {
+    const bool want = Settings::get().gpsEnabled;
+    String r;
+    if (!gpsAt(raw, "AT+CGPS?", r, 1000) || r.indexOf("+CGPS:") < 0) {
+        ST_LOCK(); s_gps.supported = false; s_gps.on = false; s_gps.fix = false; ST_UNLOCK();
+        gpsNote(want ? "Modem ei toeta GPS-i (AT+CGPS)" : "");
+        return;
+    }
+    bool on = r.indexOf("+CGPS: 1") >= 0;
+    if (want && !on) {
+        on = gpsAt(raw, "AT+CGPS=1,1", r, 3000);         // 1,1 = iseseisev GNSS (ilma AGPS-ita)
+        if (on) LOGI(TAG, "GPS sisse lülitatud – otsin satelliite (külmkäivitus kuni mõni minut)");
+        else    LOGW(TAG, "GPS-i sisselülitamine ebaõnnestus: %s", r.c_str());
+    } else if (!want && on) {
+        if (gpsAt(raw, "AT+CGPS=0", r, 3000)) { on = false; LOGI(TAG, "GPS välja lülitatud"); }
+    }
+    ST_LOCK();
+    s_gps.supported = true;
+    s_gps.on = on;
+    if (!on) { s_gps.fix = false; s_gps.sats = -1; }
+    ST_UNLOCK();
+    gpsNote("");
+}
+
+// NMEA "ddmm.mmmm" / "dddmm.mmmm" → kraadid
+static double nmeaDeg(const String &v, const String &hemi) {
+    double x = v.toDouble();
+    int d = (int)(x / 100);
+    double deg = d + (x - d * 100.0) / 60.0;
+    return (hemi == "S" || hemi == "W") ? -deg : deg;
+}
+
+// Asukoha päring PPP ajal (vajab CMUX-i). Kutsutakse Connected olekus.
+static void pollGps() {
+    static uint32_t last = 0, lastApply = 0;
+    static int lastWant = -1;
+    const uint32_t now = millis();
+    if (last && now - last < GPS_POLL_MS) return;
+    last = now;
+    if (PPP.mode() != ESP_MODEM_MODE_CMUX) {
+        gpsNote("GPS-i ei saa lugeda: modem on DATA režiimis (CMUX puudub)");
+        return;
+    }
+    const bool want = Settings::get().gpsEnabled;
+    Gps g = gps();
+    // seade muutus → kohe; muidu proovi sisselülitamist uuesti kord minutis
+    if ((int)want != lastWant || (want != g.on && now - lastApply >= 60000)) {
+        lastWant = want;
+        lastApply = now;
+        gpsApply(false);
+        g = gps();
+    }
+    if (!g.on) return;
+
+    // +CGPSINFO: lat,N/S,lon,E/W,ddmmyy,hhmmss.s,alt,kiirus(sõlme),suund  (tühjad = asukohta pole)
+    String r;
+    if (!PPP.cmd("AT+CGPSINFO", r, 1000)) return;
+    String f[9];
+    int n = fieldsAfter(r, "+CGPSINFO:", f, 9);
+    const bool fix = n >= 4 && f[0].length() && f[2].length();
+    int sats = -1;
+    if (fix) {
+        // +CGNSSINFO: mode,GPS-SV,GLONASS-SV,BEIDOU-SV,... (satelliitide arv ainult asukoha olemasolul)
+        String rs, s[4];
+        if (PPP.cmd("AT+CGNSSINFO", rs, 1000) && fieldsAfter(rs, "+CGNSSINFO:", s, 4) == 4 && s[1].length())
+            sats = s[1].toInt() + s[2].toInt() + s[3].toInt();
+    }
+    ST_LOCK();
+    const bool wasFix = s_gps.fix;
+    s_gps.fix = fix;
+    s_gps.sats = sats;
+    if (fix) {
+        s_gps.lat = nmeaDeg(f[0], f[1]);
+        s_gps.lon = nmeaDeg(f[2], f[3]);
+        s_gps.altM = n > 6 ? f[6].toFloat() : 0;
+        s_gps.speedKmh = n > 7 ? f[7].toFloat() * 1.852f : 0;
+        s_gps.course = n > 8 ? f[8].toFloat() : 0;
+        if (n > 5 && f[4].length() == 6 && f[5].length() >= 6)
+            snprintf(s_gps.utc, sizeof(s_gps.utc), "20%s-%s-%s %s:%s:%s",
+                     f[4].substring(4, 6).c_str(), f[4].substring(2, 4).c_str(), f[4].substring(0, 2).c_str(),
+                     f[5].substring(0, 2).c_str(), f[5].substring(2, 4).c_str(), f[5].substring(4, 6).c_str());
+        s_gps.fixAtMs = now;
+    }
+    const double lat = s_gps.lat, lon = s_gps.lon;
+    ST_UNLOCK();
+    if (fix && !wasFix) LOGI(TAG, "GPS asukoht leitud: %.6f, %.6f (%d satelliiti)", lat, lon, sats);
+    if (!fix && wasFix) LOGW(TAG, "GPS asukoht kadus (satelliite ei leia)");
+}
+
+// =============================================================================
 //  SIM PIN – kaitse SIM-i lukustumise (PUK) vastu
 // =============================================================================
 // Kui PIN lükati tagasi, salvestame selle NVS-i. Sama PIN-i ei proovita enam
@@ -388,6 +496,7 @@ static int atInit() {
     atCmd("AT+COPS=3,0");               // operaatori nimi pikas tekstivormingus
     atCmd("AT+CEREG=0");                // lihtne CEREG vastuse formaat
     if (atCmd("AT+CSQ", &r)) parseCsq(r);
+    gpsApply(true);                     // GNSS käivitub juba enne PPP-d (asukoha otsing võtab aega)
 
     ST_LOCK(); s_st.baud = s_baud; ST_UNLOCK();
     return 1;
@@ -592,6 +701,7 @@ static void lteTask(void *) {
                     else regLostAt = 0;
                 }
                 servicePinChange();
+                pollGps();
                 if (!s_hasIp && now - s_ipLostAt > LTE_LINK_LOST_GRACE_MS) {
                     setError("IP kadunud – taastan ühenduse");
                     break;
@@ -609,6 +719,7 @@ static void lteTask(void *) {
             ST_LOCK();
             s_st.reconnects++;
             strlcpy(s_st.ip, "-", sizeof(s_st.ip));
+            s_gps.fix = false;
             ST_UNLOCK();
             PPP.end();
             s_hasIp = false;
@@ -674,5 +785,14 @@ Status status() {
 }
 
 bool connected() { return s_hasIp && status().connected; }
+
+Gps gps() {
+    Gps c;
+    if (!s_mtx) return c;
+    ST_LOCK();
+    c = s_gps;
+    ST_UNLOCK();
+    return c;
+}
 
 }  // namespace LTE

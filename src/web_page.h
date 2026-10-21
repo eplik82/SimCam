@@ -247,6 +247,14 @@ details summary{margin-top:10px}
   <div class="row"><span>LTE IP</span><span id="m_ip">-</span></div>
   <div class="row"><span>LTE viga</span><span id="m_err">-</span></div>
  </section>
+ <section class="card"><h2>📍 Asukoht (GPS)</h2>
+  <div class="row"><span>Olek</span><span id="g_st">-</span></div>
+  <div class="row"><span>Koordinaadid</span><span id="g_pos">-</span></div>
+  <div class="row"><span>Kõrgus / kiirus</span><span id="g_alt">-</span></div>
+  <div class="row"><span>Satelliite</span><span id="g_sat">-</span></div>
+  <div class="row"><span>Satelliidiaeg (UTC)</span><span id="g_utc">-</span></div>
+  <div class="btns" style="margin-top:10px"><a class="btn" id="g_map" href="#" target="_blank" rel="noopener" style="display:none">🗺 Ava kaardil</a></div>
+ </section>
  <section class="card" id="batCard"><h2>🔋 Aku</h2>
   <div id="batOn">
    <div class="bat"><span class="pct" id="b_pct">–</span><span class="st" id="b_st">Mõõdan…</span></div>
@@ -328,8 +336,9 @@ details summary{margin-top:10px}
     <div class="two"><label>APN<input type="text" id="f_apn" maxlength="63" placeholder="operaatori APN"></label>
      <label>SIM PIN<input type="password" id="f_pin" maxlength="8" inputmode="numeric" placeholder="(muutmata)"></label></div>
     <label class="chk"><input type="checkbox" id="f_pin_clear"> SIM-il pole PIN-i</label>
+    <label class="chk"><input type="checkbox" id="f_gps_en"> GPS sees (modemi GNSS antenn) <small class="mut">– rakendub kohe</small></label>
     <div class="ipbox" id="lteIp">Mobiilivõrgu IP: –</div>
-    <div class="note">Ainult UART-modemiga (LilyGO T-PCIe SIM7600). MikroTik R11e-LTE puhul hoia väljas! LTE muudatused rakenduvad pärast taaskäivitust.</div>
+    <div class="note">Ainult UART-modemiga (LilyGO T-PCIe SIM7600). MikroTik R11e-LTE puhul hoia väljas! LTE muudatused rakenduvad pärast taaskäivitust. GPS töötab ainult koos LTE-ga; esimene asukoht võib võtta mitu minutit ja vajab vaba taevast.</div>
    </div>
    <div class="btns"><button class="pri" type="submit">Salvesta</button></div>
   </form>
@@ -413,6 +422,15 @@ async function api(u,o){const r=await fetch(u,o);if(r.status==401){location.href
 const form=o=>({method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(o)});
 function dur(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
  return (d?d+'p ':'')+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+function showGps(g){if(!g)return;let st,cls='warn';
+ if(!g.enabled){st='väljas';cls=''}else if(g.note){st=g.note;cls='bad'}
+ else if(!g.on)st=g.supported?'käivitub…':'ootan modemit…';else if(g.fix){st='asukoht olemas';cls='ok'}else st='otsin satelliite…';
+ $('g_st').innerHTML=`<span class="dot ${cls}"></span>`;$('g_st').append(st);
+ const has=g.age_s>=0,la=g.lat.toFixed(6),lo=g.lon.toFixed(6);
+ $('g_pos').textContent=has?`${la}, ${lo}`+(g.fix?'':` (${dur(g.age_s)} tagasi)`):'-';
+ $('g_alt').textContent=has?`${g.alt.toFixed(0)} m · ${g.speed.toFixed(1)} km/h`:'-';
+ $('g_sat').textContent=g.sats>=0?g.sats:'-';$('g_utc').textContent=g.utc||'-';
+ const a=$('g_map');a.style.display=has?'':'none';if(has)a.href=`https://www.openstreetmap.org/?mlat=${la}&mlon=${lo}#map=17/${la}/${lo}`}
 function kb(b){return b>1048576?(b/1048576).toFixed(2)+' MB':(b/1024).toFixed(0)+' kB'}
 function bars(n){let h='<span class="bars">';for(let i=0;i<4;i++)h+=`<i class="${i<n?'on':''}" style="height:${4+i*3}px"></i>`;return h+'</span>'}
 let rtspAuth=true;
@@ -422,7 +440,7 @@ async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-s
  $('f_push_pass').value='';$('f_push_pass').placeholder=c.push_has_pass?'(muutmata)':'(puudub)';pushVis();
  $('f_sta_en').checked=c.sta_en;$('f_sta_ssid').value=c.sta_ssid;$('f_sta_pass').placeholder=c.sta_has_pass?'(muutmata)':'(avatud võrk)';
  $('f_ap_en').checked=c.ap_en;$('f_ap_ssid').value=c.ap_ssid;
- $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;
+ $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;$('f_gps_en').checked=c.gps_en;
  $('f_pin').placeholder=c.has_pin?'(salvestatud)':'(puudub)';$('f_pin_clear').checked=false;
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
  curFs=String(c.framesize);
@@ -455,7 +473,7 @@ $('fNet').onsubmit=e=>{e.preventDefault();const ap=$('f_ap_pass').value,pin=$('f
  if(pin&&!/^[0-9]{4,8}$/.test(pin)){showTab('tLte');toast('PIN peab olema 4–8 numbrit');return}
  save({sta_en:$('f_sta_en').checked?1:0,sta_ssid:$('f_sta_ssid').value,sta_pass:$('f_sta_pass').value,
   ap_en:$('f_ap_en').checked?1:0,ap_ssid:$('f_ap_ssid').value,ap_pass:ap,
-  lte_en:$('f_lte_en').checked?1:0,apn:$('f_apn').value.trim(),sim_pin:pin,sim_pin_clear:$('f_pin_clear').checked?1:0},
+  lte_en:$('f_lte_en').checked?1:0,gps_en:$('f_gps_en').checked?1:0,apn:$('f_apn').value.trim(),sim_pin:pin,sim_pin_clear:$('f_pin_clear').checked?1:0},
   'Võrgu seaded salvestatud').then(o=>{if(o)['f_sta_pass','f_ap_pass','f_pin'].forEach(i=>$(i).value='')})};
 function showTab(id){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t==id));
  document.querySelectorAll('.tab').forEach(t=>t.hidden=t.id!=id);$('simBox').hidden=id!='tLte'}
@@ -556,7 +574,7 @@ async function poll(){
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
   $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;
-  showBat(d.bat);showMic(d.mic);showPush(d.push);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
+  showBat(d.bat);showMic(d.mic);showPush(d.push);showGps(d.gps);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
  }catch(e){if(e!==0)$('hdr').innerHTML='<span class="dot bad"></span>Seade ei vasta'}
  setTimeout(poll,3000)}
 const BST={MEASURING:'Mõõdan…',ABSENT:'Aku puudub',CHARGING:'⚡ Laeb',FULL:'✓ Täis / laadijal',DISCHARGING:'Tühjeneb',LOW:'⚠ Madal – laadi!',STABLE:'Stabiilne'};

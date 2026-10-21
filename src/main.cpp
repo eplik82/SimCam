@@ -93,13 +93,19 @@ void loop() {
         Battery::Status b = Battery::status();
         char bat[48] = "";
         if (b.enabled) snprintf(bat, sizeof(bat), " | aku %.2f V %d%% %s", b.voltage, b.percent, Battery::stateName(b.state));
+        char gps[64] = "";
+        if (LTE::enabled() && Settings::get().gpsEnabled) {
+            LTE::Gps g = LTE::gps();
+            if (g.fix) snprintf(gps, sizeof(gps), " | GPS %.5f,%.5f %d sat", g.lat, g.lon, g.sats);
+            else snprintf(gps, sizeof(gps), " | GPS %s", g.on ? "otsin" : "väljas");
+        }
         LOGI(TAG, "WiFi=%s %s (%d dBm) AP=%d kl. | LTE=%s IP=%s op=%s CSQ=%d (%d dBm) RSRP=%d | cam %.1f fps %u kB AF=%s | "
-                  "rtsp=%d web=%d | heap=%u psram=%u | %.1f°C%s",
+                  "rtsp=%d web=%d | heap=%u psram=%u | %.1f°C%s%s",
              w.staConnected ? w.staSsid : "-", w.staIp, w.staRssi, w.apClients,
              LTE::enabled() ? LTE::stateName(m.state) : "OFF", m.ip, m.op, m.csq, m.rssiDbm, m.rsrpDbm,
              Camera::fps(), (unsigned)(Camera::lastFrameBytes() / 1024), Camera::afStatus(),
              RtspServer::clients(), WebUI::streamClients(),
-             ESP.getFreeHeap(), ESP.getFreePsram(), temperatureRead(), bat);
+             ESP.getFreeHeap(), ESP.getFreePsram(), temperatureRead(), bat, gps);
     }
     WifiMgr::loop();
     delay(10);
