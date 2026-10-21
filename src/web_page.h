@@ -424,7 +424,7 @@ const form=o=>({method:'POST',headers:{'Content-Type':'application/x-www-form-ur
 function dur(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
  return (d?d+'p ':'')+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
 function showRate(r){if(!r)return;$('m_rate').textContent=r.active?
- `${r.sent.toFixed(0)} kB/s · ${r.fps.toFixed(1)} fps (eelarve ${r.budget.toFixed(0)}/${r.cap} kB/s, modem ${r.rtt||'–'} ms)`:`ootel · lagi ${r.cap} kB/s levi järgi`}
+ `${r.sent.toFixed(0)} kB/s · ${r.fps.toFixed(1)} fps (eelarve ${r.budget.toFixed(0)}/${r.cap} kB/s, lagi RSRP ${r.rsrp||'?'} järgi, modem ${r.rtt||'–'} ms)`:`ootel · lagi ${r.cap} kB/s (RSRP ${r.rsrp||'?'} dBm järgi)`}
 function showGps(g){if(!g)return;let st,cls='warn';const has=g.age_s>=0,nx=g.next_s>=0?`, järgmine ${dur(g.next_s)} pärast`:'';
  if(!g.enabled){st='väljas';cls=''}else if(g.note){st=g.note;cls='bad'}
  else if(g.active)st=!g.on?'käivitub…':g.fix?'asukoht leitud, täpsustan…':'otsin satelliite…';
@@ -569,7 +569,7 @@ async function poll(){
   $('w_ap').innerHTML=w.ap_en?`<span class="dot ok"></span>${w.ap_ssid} · ${w.ap_ip} · ${w.ap_clients} kl.${w.ap_temp?' (failsafe)':''}`:'väljas';
   const cls=m.connected?'ok':(m.state=='SIM_ERROR'?'bad':(m.state=='DISABLED'?'':'warn'));
   $('m_state').innerHTML=`<span class="dot ${cls}"></span>${m.state=='DISABLED'?'väljas':m.state}`;
-  $('m_op').innerHTML=m.operator=='-'?'-':`${m.operator}${m.tech!='-'?' ('+m.tech+')':''} · ${m.csq>=99?'-':bars(cq(m.csq))+m.rssi+' dBm'}`;
+  $('m_op').innerHTML=m.operator=='-'?'-':`${m.operator}${m.tech!='-'?' ('+m.tech+')':''} · ${m.csq>=99?'-':bars(cq(m.csq))+'RSSI '+m.rssi+' dBm'}${m.rsrp?' · RSRP '+m.rsrp+' dBm':''}`;
   $('m_ip').textContent=m.ip;$('m_err').textContent=m.error||'-';
   $('lteIp').innerHTML=m.connected?`📡 Mobiilivõrgu IP: <b>${m.ip}</b> (operaatorilt saadud)`:(m.state=='DISABLED'?'Mobiilivõrgu IP: – (LTE väljas)':`Mobiilivõrgu IP: – (IP-d pole veel saadud, olek ${m.state})`);
   if(s.rtsp_auth!==undefined&&s.rtsp_auth!==rtspAuth){rtspAuth=s.rtsp_auth;showRtsp()}
