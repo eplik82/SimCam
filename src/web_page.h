@@ -413,6 +413,11 @@ details summary{margin-top:10px}
    <div class="btns"><button type="submit">Muuda parool</button></div>
   </form>
   <hr>
+  <label class="chk"><input type="checkbox" id="f_https_en"> HTTPS sees (port 443)</label>
+  <label class="chk"><input type="checkbox" id="f_https_rd"> Suuna internetist (LTE) http:// → https://</label>
+  <div class="note" id="httpsNote">Sertifikaadi SHA-256: <code id="https_fp" style="word-break:break-all">-</code></div>
+  <div class="btns"><button type="button" id="bHttpsRegen">Loo uus sertifikaat</button></div>
+  <hr>
   <div class="row"><span>Püsivara</span><span id="o_cur">-</span></div>
   <div class="row"><span>Viimane GitHubis</span><span id="o_lat">-</span></div>
   <div class="row"><span>Olek</span><span id="o_st">-</span></div>
@@ -453,6 +458,9 @@ async function loadCfg(){try{const c=await (await api('/api/config',{cache:'no-s
  $('f_push_pass').value='';$('f_push_pass').placeholder=c.push_has_pass?'(muutmata)':'(puudub)';pushVis();
  $('f_sta_en').checked=c.sta_en;$('f_sta_ssid').value=c.sta_ssid;$('f_sta_pass').placeholder=c.sta_has_pass?'(muutmata)':'(avatud võrk)';
  $('f_ap_en').checked=c.ap_en;$('f_ap_ssid').value=c.ap_ssid;
+ $('f_https_en').checked=c.https_en;$('f_https_rd').checked=c.https_rd;
+ $('https_fp').textContent=c.https_fp||'(sertifikaati pole veel – luuakse taaskäivitusel)';
+ $('httpsNote').firstChild.textContent=(c.https_on?'HTTPS töötab. ':'HTTPS ei tööta (rakendub taaskäivitusel). ')+'Sertifikaadi SHA-256: ';
  $('f_lte_en').checked=c.lte_en;$('f_apn').value=c.apn;$('f_gps_en').checked=c.gps_en;
  $('f_pin').placeholder=c.has_pin?'(salvestatud)':'(puudub)';$('f_pin_clear').checked=false;
  $('f_rtsp_auth').checked=c.rtsp_auth;rtspAuth=c.rtsp_auth;showRtsp();
@@ -698,8 +706,15 @@ const HELP={
  f_push_url:'Serveri RTSP aadress, nt rtsp://server:8554/kaamera (ilma kasutaja ja paroolita).',
  f_push_user:'Push-serveri kasutajanimi (kui server nõuab).',
  f_push_pass:'Push-serveri parool. Tühi = jääb muutmata.',
+ f_https_en:'Krüpteeritud veebiliides aadressil https://… (port 443). Sertifikaat on seadmes loodud (isetehtud), seepärast näitab brauser esimesel korral hoiatust – võrdle sõrmejälge ja vali „Jätka“. Rakendub taaskäivitusel.',
+ f_https_rd:'Internetist (LTE avalik IP) tulevad http:// päringud suunatakse https:// peale, et parool ei liiguks avatekstina. Kodu-WiFi ja hotspot jäävad HTTP peale.',
+ https_fp:'Sertifikaadi SHA-256 sõrmejälg. Brauseris lukuikoon → sertifikaat → sõrmejälg peab olema sama – siis on ühendus just selle kaameraga.',
  f_mic_en:'Mikrofon ja heli RTSP voos. LTE puhul vali G.711 – see võtab ~8 kB/s pildi eelarvest (L16 ~32 kB/s).',
 };
+$('f_https_en').onchange=()=>save({https_en:$('f_https_en').checked?1:0},$('f_https_en').checked?'HTTPS sees':'HTTPS väljas');
+$('f_https_rd').onchange=()=>save({https_rd:$('f_https_rd').checked?1:0},$('f_https_rd').checked?'Internetist suunatakse HTTPS-ile':'Ümbersuunamine väljas');
+$('bHttpsRegen').onclick=async()=>{if(!confirm('Luua uus HTTPS sertifikaat? Seade taaskäivitub ja brauser küsib uue sertifikaadi kinnitust.'))return;
+ try{await api('/api/https/regen',{method:'POST'});toast('Uus sertifikaat luuakse – seade taaskäivitub')}catch(e){}};
 function helpInit(){for(const[id,t]of Object.entries(HELP)){const e=$(id);if(!e)continue;
  const row=e.closest('.row'),l=row?row.firstElementChild:e.closest('label');if(!l||l.querySelector('.hlp'))continue;
  const i=document.createElement('span');i.className='hlp';i.textContent='ⓘ';i.title=t;i.tabIndex=0;i.setAttribute('role','button');i.setAttribute('aria-label',t);

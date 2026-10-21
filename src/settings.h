@@ -24,6 +24,8 @@ struct Data {
     char webPass[65];         // veebiliidese + RTSP parool
     char authSalt[17];
     bool rtspAuth;            // kas RTSP nõuab parooli
+    bool httpsEnabled;        // HTTPS server pordil 443 (rakendub taaskäivitusel)
+    bool httpsRedirect;       // internetist (LTE) tulevad http:// päringud → https://
     bool autoUpdate;          // paigalda GitHubi uuendused automaatselt
     bool batEnabled;          // aku on ühendatud (näita olekut veebiliideses)
     float batCal;             // aku pinge kalibreerimistegur (1.0 = ilma parandita)

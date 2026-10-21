@@ -16,10 +16,12 @@
 #include "audio.h"
 #include "log.h"
 #include "lte_rate.h"
+#include "https_cert.h"
 
 #include <Arduino.h>
 #include <atomic>
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_heap_caps.h"
 #include "lwip/sockets.h"
 
@@ -29,6 +31,7 @@ static const char *TAG = "WEB";
 namespace WebUI {
 
 static httpd_handle_t   s_server = nullptr;
+static httpd_handle_t   s_https = nullptr;        // HTTPS (isetehtud sertifikaat)
 static std::atomic<int> s_streams{0};
 static std::atomic<int> s_audioStreams{0};
 
@@ -660,6 +663,7 @@ static esp_err_t h_config_get(httpd_req_t *req) {
         "\"apn\":\"%s\",\"has_pin\":%s,\"default_pass\":%s,\"rtsp_auth\":%s,\"auto_update\":%s,"
         "\"mic_en\":%s,\"mic_gain\":%d,\"mic_codec\":%d,\"rtsp_audio\":%s,"
         "\"push_en\":%s,\"push_url\":\"%s\",\"push_user\":\"%s\",\"push_has_pass\":%s,"
+        "\"https_en\":%s,\"https_rd\":%s,\"https_on\":%s,\"https_fp\":\"%s\","
         "\"framesize\":%d,\"framesizes\":%s}",
         nm, d.staEnabled ? "true" : "false", ss, d.staPass[0] ? "true" : "false",
         d.apEnabled ? "true" : "false", as, d.apPass[0] ? "true" : "false",
@@ -668,6 +672,8 @@ static esp_err_t h_config_get(httpd_req_t *req) {
         d.autoUpdate ? "true" : "false",
         d.micEnabled ? "true" : "false", d.micGain, d.micCodec, d.rtspAudio ? "true" : "false",
         d.pushEnabled ? "true" : "false", pu, pus, d.pushPass[0] ? "true" : "false",
+        d.httpsEnabled ? "true" : "false", d.httpsRedirect ? "true" : "false", s_https ? "true" : "false",
+        HttpsCert::fingerprint(),
         Camera::framesize(), Camera::framesizesJson().c_str());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -737,6 +743,8 @@ static esp_err_t h_config_post(httpd_req_t *req) {
     if (formField(body, "sim_pin", v, sizeof(v)) && v[0]) strlcpy(d.simPin, v, sizeof(d.simPin));
     if (formField(body, "sim_pin_clear", v, sizeof(v)) && v[0] == '1') d.simPin[0] = 0;
     if (formField(body, "rtsp_auth", v, sizeof(v))) d.rtspAuth = v[0] == '1';
+    if (formField(body, "https_en", v, sizeof(v))) d.httpsEnabled = v[0] == '1';     // taaskäivitusel
+    if (formField(body, "https_rd", v, sizeof(v))) d.httpsRedirect = v[0] == '1';    // kohe
     if (formField(body, "mic_en", v, sizeof(v))) d.micEnabled = v[0] == '1';
     if (formField(body, "mic_gain", v, sizeof(v))) d.micGain = constrain(atoi(v), 0, 40);
     if (formField(body, "mic_codec", v, sizeof(v))) d.micCodec = v[0] == '1' ? 1 : 0;
@@ -752,7 +760,8 @@ static esp_err_t h_config_post(httpd_req_t *req) {
         return httpd_resp_sendstr(req,
             "{\"ok\":false,\"error\":\"Vigased seaded: SSID ei tohi olla tühi, hotspoti parool min 8 märki, PIN ainult numbrid\"}");
     }
-    bool reboot = d.lteEnabled != oldLte || (d.lteEnabled && modemChanged);   // rakendub taaskäivitusel
+    bool reboot = d.lteEnabled != oldLte || (d.lteEnabled && modemChanged) ||   // rakendub taaskäivitusel
+                  d.httpsEnabled != before.httpsEnabled;
     char resp[80];
     snprintf(resp, sizeof(resp), "{\"ok\":true,\"reboot\":%s,\"ap_forced\":%s}",
              reboot ? "true" : "false", apForced ? "true" : "false");
@@ -975,13 +984,52 @@ static esp_err_t h_notfound(httpd_req_t *req, httpd_err_code_t) {
     return ESP_FAIL;
 }
 
+// POST /api/https/regen – kustuta sertifikaat, uus luuakse taaskäivitusel
+static esp_err_t h_https_regen(httpd_req_t *req) {
+    if (!authorized(req)) return ESP_OK;
+    HttpsCert::erase();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    xTaskCreate(rebootTask, "reboot", 2048, nullptr, 1, nullptr);
+    return ESP_OK;
+}
+
+// HTTP serveri käsitlejate ümbris: internetist (LTE) tulevad päringud → https://
+// (parool ja sessiooniküpsis ei liigu avalikus võrgus avatekstina). Kohtvõrk ja
+// hotspot jäävad HTTP peale (telefonide captive portal vajab HTTP-d).
+typedef esp_err_t (*Handler)(httpd_req_t *);
+static esp_err_t h_http(httpd_req_t *req) {
+    if (s_https && Settings::get().httpsRedirect && LteRate::isLteSocket(httpd_req_to_sockfd(req))) {
+        char host[64] = "";
+        if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK || !host[0])
+            strlcpy(host, LTE::status().ip, sizeof(host));
+        char *colon = strchr(host, ':');
+        if (colon) *colon = 0;                                   // :80 maha
+        String loc = String("https://") + host + req->uri;
+        httpd_resp_set_status(req, req->method == HTTP_GET ? "301 Moved Permanently" : "308 Permanent Redirect");
+        httpd_resp_set_hdr(req, "Location", loc.c_str());
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        return httpd_resp_send(req, "", 0);
+    }
+    return ((Handler)req->user_ctx)(req);
+}
+
+static void registerAll(httpd_handle_t h, const httpd_uri_t *uris, size_t n, bool wrap) {
+    for (size_t i = 0; i < n; i++) {
+        httpd_uri_t u = uris[i];
+        if (wrap) { u.user_ctx = (void *)u.handler; u.handler = h_http; }
+        httpd_register_uri_handler(h, &u);
+    }
+    httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, h_notfound);
+}
+
 // =============================================================================
 bool begin() {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port      = HTTP_PORT;
     cfg.ctrl_port        = 32768;
     cfg.max_uri_handlers = 40;
-    cfg.max_open_sockets = 7;
+    cfg.max_open_sockets = 5;             // + HTTPS 3, RTSP, DNS … – lwIP-s kokku 16 soklit
     cfg.lru_purge_enable = true;          // vabasta vanimad, kui soketid otsas
     cfg.stack_size       = 8192;
     cfg.core_id          = 1;
@@ -1023,10 +1071,32 @@ bool begin() {
         {"/api/battery", HTTP_GET,  h_battery,      nullptr},
         {"/api/battery", HTTP_POST, h_battery_post, nullptr},
         {"/api/gps",     HTTP_GET,  h_gps,          nullptr},
+        {"/api/https/regen", HTTP_POST, h_https_regen, nullptr},
     };
-    for (const auto &u : uris) httpd_register_uri_handler(s_server, &u);
-    httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, h_notfound);
+    const size_t n = sizeof(uris) / sizeof(uris[0]);
+    registerAll(s_server, uris, n, true);
     LOGI(TAG, "Veebiliides pordil %d", HTTP_PORT);
+
+    // --- HTTPS (isetehtud sertifikaat; TLS mälu PSRAM-is) ---------------------
+    if (Settings::get().httpsEnabled && HttpsCert::ensure()) {
+        httpd_ssl_config_t sc = HTTPD_SSL_CONFIG_DEFAULT();
+        sc.httpd = cfg;
+        sc.httpd.ctrl_port = 32769;
+        sc.httpd.max_open_sockets = HTTPS_MAX_SOCKETS;
+        sc.httpd.stack_size = 10240;                             // TLS käepigistus vajab rohkem pinu
+        sc.port_secure = HTTPS_PORT;
+        sc.servercert = (const uint8_t *)HttpsCert::certPem();
+        sc.servercert_len = strlen(HttpsCert::certPem()) + 1;
+        sc.prvtkey_pem = (const uint8_t *)HttpsCert::keyPem();
+        sc.prvtkey_len = strlen(HttpsCert::keyPem()) + 1;
+        if (httpd_ssl_start(&s_https, &sc) == ESP_OK) {
+            registerAll(s_https, uris, n, false);
+            LOGI(TAG, "HTTPS pordil %d (isetehtud sertifikaat), vaba heap %u B", HTTPS_PORT, ESP.getFreeHeap());
+        } else {
+            s_https = nullptr;
+            LOGE(TAG, "HTTPS serveri käivitamine ebaõnnestus");
+        }
+    }
     return true;
 }
 

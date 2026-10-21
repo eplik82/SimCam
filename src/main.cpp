@@ -27,10 +27,12 @@
 #include "battery.h"
 #include "audio.h"
 #include "lte_rate.h"
+#include "https_cert.h"
 
 static const char *TAG = "MAIN";
 
 void setup() {
+    HttpsCert::usePsramForTls();      // enne igasugust mbedTLS kasutust (HTTPS server, OTA)
     Serial.begin(115200);
     // USB CDC: ära oota, kui arvutis keegi porti ei loe (laadija/arvuti ilma terminalita).
     // Muidu blokeeris iga logirida ~2 s ja kogu seade (RTSP vastused jne) aeglustus.

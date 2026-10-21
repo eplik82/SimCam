@@ -32,6 +32,8 @@ static void defaults(Data &d) {
     strlcpy(d.camName, CAM_NAME_DEFAULT, sizeof(d.camName));
     d.authSalt[0] = 0;
     d.rtspAuth = true;
+    d.httpsEnabled = HTTPS_ENABLED_DEFAULT;
+    d.httpsRedirect = HTTPS_REDIRECT_DEFAULT;
     d.autoUpdate = false;
     d.batEnabled = true;
     d.batCal = 1.0f;
@@ -78,6 +80,8 @@ void load() {
         if (p.isKey("apn")) p.getString("apn", d.apn, sizeof(d.apn));
         if (p.isKey("web_pass")) p.getString("web_pass", d.webPass, sizeof(d.webPass));
         d.rtspAuth = p.getBool("rtsp_auth", d.rtspAuth);
+        d.httpsEnabled = p.getBool("https_en", d.httpsEnabled);
+        d.httpsRedirect = p.getBool("https_rd", d.httpsRedirect);
         d.autoUpdate = p.getBool("auto_upd", d.autoUpdate);
         d.batEnabled = p.getBool("bat_en", d.batEnabled);
         d.batCal = p.getFloat("bat_cal", d.batCal);
@@ -150,6 +154,8 @@ bool save(const Data &din) {
     p.putString("web_pass", d.webPass);
     p.putString("salt", d.authSalt);
     p.putBool("rtsp_auth", d.rtspAuth);
+    p.putBool("https_en", d.httpsEnabled);
+    p.putBool("https_rd", d.httpsRedirect);
     p.putBool("auto_upd", d.autoUpdate);
     p.putBool("bat_en", d.batEnabled);
     p.putFloat("bat_cal", d.batCal);

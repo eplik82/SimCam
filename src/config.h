@@ -183,6 +183,10 @@
 #define RTSP_SESSION_TIMEOUT 60          // s, UDP klientidel keep-alive nõutud
 
 #define HTTP_PORT            80
+#define HTTPS_PORT           443
+#define HTTPS_ENABLED_DEFAULT  1         // isetehtud sertifikaat (luuakse seadmes)
+#define HTTPS_REDIRECT_DEFAULT 1         // internetist (LTE) http:// → https://
+#define HTTPS_MAX_SOCKETS    3           // TLS sessioonid (PSRAM-is); lwIP-s kokku 16 soklit
 #define HTTP_MAX_STREAMS     2           // samaaegsed MJPEG vaatajad
 
 // -----------------------------------------------------------------------------
