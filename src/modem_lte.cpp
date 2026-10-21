@@ -8,6 +8,7 @@
 #include <PPP.h>
 #include <Preferences.h>
 #include "settings.h"
+#include "lte_rate.h"
 
 static const char *TAG = "LTE";
 
@@ -147,6 +148,22 @@ static void escapeDataMode() {
     atCmd("ATH", nullptr, 1000, true);
 }
 
+// 3GPP 27.010 CMUX "close down" (CLD) DLCI 0 kaudu: kui modem jäi multipleksrežiimi
+// (nt CMUX kanal jooksis kinni), väljub see sellest ja vastab taas tavalisele AT-le.
+// Ilma selleta tundus modem "väljas" ja PWRKEY impulss lülitas selle hoopis välja.
+static void cmuxCloseDown() {
+    static const uint8_t cld[] = {0xF9, 0x03, 0xEF, 0x05, 0xC3, 0x01, 0xF2, 0xF9};   // FCS 0xF2
+    const uint32_t bauds[] = {MODEM_BAUD_TARGET, 921600, MODEM_BAUD_DEFAULT};
+    for (uint32_t b : bauds) {
+        serialOpen(b);
+        AT.write(cld, sizeof(cld));
+        AT.flush();
+        delay(100);
+    }
+    delay(500);
+    while (AT.available()) AT.read();
+}
+
 // T-SIMCAM: GPIO48 "PCIE_PWR" – HIGH-impulss toimib modemi PWRKEY-na.
 static void pwrkeyPulse(uint32_t ms) {
     LOGI(TAG, "PWRKEY impulss %lu ms (GPIO%d)", (unsigned long)ms, MODEM_PWRKEY_PIN);
@@ -172,6 +189,8 @@ static bool powerOnModem() {
     if (modemResponds()) return true;
     escapeDataMode();
     if (modemResponds()) return true;
+    cmuxCloseDown();
+    if (modemResponds()) { LOGI(TAG, "Modem väljus CMUX režiimist"); return true; }
 
     // 2) Lülita sisse PWRKEY impulsiga (sama järjestus mis LilyGO näidetes)
     pwrkeyPulse(500);
@@ -578,7 +597,10 @@ static void onNetEvent(arduino_event_id_t event, arduino_event_info_t info) {
 static bool pollModem() {
     if (PPP.mode() == ESP_MODEM_MODE_DATA) return true;   // AT kanal pole saadaval
     String r;
-    if (!PPP.cmd("AT+CSQ", r, 1000)) return false;
+    const uint32_t t0 = millis();
+    const bool ok = PPP.cmd("AT+CSQ", r, 1000);
+    LteRate::atSample(millis() - t0, ok);              // tühikäigu vastamisaeg (võrdluseks)
+    if (!ok) return false;
     parseCsq(r);
     if (PPP.cmd("AT+CESQ", r, 1000))  parseCesq(r);
     if (PPP.cmd("AT+COPS?", r, 3000)) parseCops(r);
@@ -732,6 +754,7 @@ static void lteTask(void *) {
             // Internetist tulnud ühenduste vastused peavad minema LTE kaudu,
             // ka siis, kui WiFi on samal ajal ühendatud.
             PPP.setDefault();
+            LteRate::reset((uint32_t)PPP.localIP(), status().rsrpDbm);
             LOGI(TAG, "*** ONLINE: rtsp://%s:%d%s  http://%s/ ***",
                  ip.c_str(), RTSP_PORT, RTSP_PATH, ip.c_str());
             backoff = 5000;
@@ -760,6 +783,13 @@ static void lteTask(void *) {
                     setError("Modem ei vasta (CMUX kanal kinni) – taastan ühenduse");
                     break;
                 }
+                if (PPP.mode() == ESP_MODEM_MODE_CMUX && LteRate::wantProbe()) {   // voo ajal: modemi järjekorra pikkus
+                    String r;
+                    const uint32_t t0 = millis();
+                    const bool ok = PPP.cmd("AT", r, 1500);
+                    LteRate::atSample(millis() - t0, ok);
+                    atFails = ok ? 0 : atFails + 1;            // voo ajal tuvastatakse kinnijäämine ~8 s-ga
+                }
                 servicePinChange();
                 if (!atFails) pollGps();
                 if (!s_hasIp && now - s_ipLostAt > LTE_LINK_LOST_GRACE_MS) {
@@ -781,6 +811,7 @@ static void lteTask(void *) {
             strlcpy(s_st.ip, "-", sizeof(s_st.ip));
             s_gps.fix = false;
             ST_UNLOCK();
+            LteRate::reset(0, 0);
             PPP.end();
             s_hasIp = false;
             failedRecoveries++;

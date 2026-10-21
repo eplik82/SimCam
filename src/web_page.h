@@ -245,6 +245,7 @@ details summary{margin-top:10px}
   <div class="row"><span>LTE</span><span id="m_state">-</span></div>
   <div class="row"><span>LTE operaator / levi</span><span id="m_op">-</span></div>
   <div class="row"><span>LTE IP</span><span id="m_ip">-</span></div>
+  <div class="row"><span>LTE voog</span><span id="m_rate">-</span></div>
   <div class="row"><span>LTE viga</span><span id="m_err">-</span></div>
  </section>
  <section class="card"><h2>📍 Asukoht (GPS)</h2>
@@ -422,6 +423,8 @@ async function api(u,o){const r=await fetch(u,o);if(r.status==401){location.href
 const form=o=>({method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(o)});
 function dur(s){s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
  return (d?d+'p ':'')+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+function showRate(r){if(!r)return;$('m_rate').textContent=r.active?
+ `${r.sent.toFixed(0)} kB/s · ${r.fps.toFixed(1)} fps (eelarve ${r.budget.toFixed(0)} kB/s, modem ${r.rtt||'–'} ms)`:`ootel · eelarve ${r.budget.toFixed(0)} kB/s`}
 function showGps(g){if(!g)return;let st,cls='warn';const has=g.age_s>=0,nx=g.next_s>=0?`, järgmine ${dur(g.next_s)} pärast`:'';
  if(!g.enabled){st='väljas';cls=''}else if(g.note){st=g.note;cls='bad'}
  else if(g.active)st=!g.on?'käivitub…':g.fix?'asukoht leitud, täpsustan…':'otsin satelliite…';
@@ -575,7 +578,7 @@ async function poll(){
   $('c_cli').textContent=s.rtsp_clients+' / '+s.http_streams;
   $('s_up').textContent=dur(s.uptime);$('s_ram').textContent=kb(s.heap_free)+' / '+kb(s.heap_total);
   $('s_ps').textContent=kb(s.psram_free)+' / '+kb(s.psram_total);$('s_t').textContent=s.temp.toFixed(1)+' °C';$('s_fw').textContent=s.fw;
-  showBat(d.bat);showMic(d.mic);showPush(d.push);showGps(d.gps);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
+  showBat(d.bat);showMic(d.mic);showPush(d.push);showGps(d.gps);showRate(d.lterate);$('s_rst').textContent=s.reset;$('s_log').textContent=`${s.log_w} hoiatust, ${s.log_e} viga`;
  }catch(e){if(e!==0)$('hdr').innerHTML='<span class="dot bad"></span>Seade ei vasta'}
  setTimeout(poll,3000)}
 const BST={MEASURING:'Mõõdan…',ABSENT:'Aku puudub',CHARGING:'⚡ Laeb',FULL:'✓ Täis / laadijal',DISCHARGING:'Tühjeneb',LOW:'⚠ Madal – laadi!',STABLE:'Stabiilne'};

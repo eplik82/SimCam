@@ -15,6 +15,7 @@
 #include "battery.h"
 #include "audio.h"
 #include "log.h"
+#include "lte_rate.h"
 
 #include <Arduino.h>
 #include <atomic>
@@ -298,6 +299,17 @@ static String gpsJson() {
     return String(j);
 }
 
+// LTE vaatajate saatmiseelarve (lte_rate.h)
+static String rateJson() {
+    const LteRate::Status r = LteRate::status();
+    char j[200];
+    snprintf(j, sizeof(j),
+        "\"lterate\":{\"active\":%s,\"budget\":%.1f,\"sent\":%.1f,\"fps\":%.2f,\"rtt\":%lu,\"base\":%lu,\"cuts\":%lu}",
+        r.active ? "true" : "false", r.budgetKBps, r.sentKBps, r.fps,
+        (unsigned long)r.rttMs, (unsigned long)r.baseRttMs, (unsigned long)r.cuts);
+    return String(j);
+}
+
 // GET /api/gps – ainult asukoht (nt Home Assistant / skriptide jaoks)
 static esp_err_t h_gps(httpd_req_t *req) {
     if (!authorized(req)) return ESP_OK;
@@ -405,7 +417,7 @@ static esp_err_t h_status(httpd_req_t *req) {
         ESP.getFreePsram(), ESP.getPsramSize(), temperatureRead(),
         RtspServer::clients(), (int)s_streams, (Auth::enabled() && cfgd.rtspAuth) ? "true" : "false", ip, RTSP_PORT, RTSP_PATH,
         SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors(),
-        (batJson() + "," + micJson() + "," + pushJson() + "," + gpsJson()).c_str());
+        (batJson() + "," + micJson() + "," + pushJson() + "," + gpsJson() + "," + rateJson()).c_str());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -808,7 +820,8 @@ static void streamTask(void *arg) {
     uint32_t lastSeq = 0;
     char part[64];
     Camera::addConsumer();
-    LOGI(TAG, "MJPEG vaataja lisandus (%d)", (int)s_streams);
+    const bool lte = LteRate::isLteSocket(httpd_req_to_sockfd(req));
+    LOGI(TAG, "MJPEG vaataja lisandus (%d)%s", (int)s_streams, lte ? " – LTE kaudu" : "");
 
     httpd_resp_set_type(req, STREAM_CT);
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -821,10 +834,13 @@ static void streamTask(void *arg) {
             continue;
         }
         lastSeq = fr.seq;
+        if (lte && !LteRate::allow(fr.len)) continue;         // LTE: kaader ainult eelarve piires
+        const uint32_t t0 = millis();
         int n = snprintf(part, sizeof(part), STREAM_PART, (unsigned)fr.len);
         if (httpd_resp_send_chunk(req, STREAM_SEP, strlen(STREAM_SEP)) != ESP_OK) break;
         if (httpd_resp_send_chunk(req, part, n) != ESP_OK) break;
         if (httpd_resp_send_chunk(req, (const char *)fr.buf, fr.len) != ESP_OK) break;
+        if (lte) LteRate::sent(fr.len, millis() - t0);
         winFrames++;
         winBytes += fr.len + n + strlen(STREAM_SEP);
         uint32_t now = millis();

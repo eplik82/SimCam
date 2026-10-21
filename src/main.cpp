@@ -26,6 +26,7 @@
 #include "ota.h"
 #include "battery.h"
 #include "audio.h"
+#include "lte_rate.h"
 
 static const char *TAG = "MAIN";
 
@@ -93,13 +94,19 @@ void loop() {
         Battery::Status b = Battery::status();
         char bat[48] = "";
         if (b.enabled) snprintf(bat, sizeof(bat), " | aku %.2f V %d%% %s", b.voltage, b.percent, Battery::stateName(b.state));
-        char gps[64] = "";
+        char gps[120] = "";
         if (LTE::enabled() && Settings::get().gpsEnabled) {
             LTE::Gps g = LTE::gps();
             if (g.active && !g.fix) snprintf(gps, sizeof(gps), " | GPS otsin");
             else if (g.fixAtMs) snprintf(gps, sizeof(gps), " | GPS %.5f,%.5f (%lu min)", g.lat, g.lon,
                                          (unsigned long)((millis() - g.fixAtMs) / 60000));
             else snprintf(gps, sizeof(gps), " | GPS -");
+        }
+        const LteRate::Status rs = LteRate::status();
+        if (rs.active) {
+            size_t l = strlen(gps);
+            snprintf(gps + l, sizeof(gps) - l, " | LTE voog %.0f kB/s %.1f fps (eelarve %.0f, AT %lu/%lu ms)",
+                     rs.sentKBps, rs.fps, rs.budgetKBps, (unsigned long)rs.rttMs, (unsigned long)rs.baseRttMs);
         }
         LOGI(TAG, "WiFi=%s %s (%d dBm) AP=%d kl. | LTE=%s IP=%s op=%s CSQ=%d (%d dBm) RSRP=%d | cam %.1f fps %u kB AF=%s | "
                   "rtsp=%d web=%d | heap=%u psram=%u | %.1f°C%s%s",

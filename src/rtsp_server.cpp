@@ -18,6 +18,7 @@
 #include "settings.h"
 #include "audio.h"
 #include "log.h"
+#include "lte_rate.h"
 
 #include <Arduino.h>
 #include <atomic>
@@ -126,6 +127,7 @@ struct Session {
     int      udp = -1;                        // üks UDP sokkel mõlemale rajale
     sockaddr_in peer = {};
     bool     tcp = false;
+    bool     lte = false;                     // klient/server LTE kaudu → saatmiseelarve
     uint16_t srvRtp = 0;
     Track    v, a;                            // pilt (track1), heli (track2)
     bool     audio = false;                   // heli pakuti SDP-s
@@ -172,7 +174,13 @@ static bool sendPkt(Session &s, uint8_t ch, uint16_t port, uint8_t *f, size_t rt
     to.sin_port = htons(port);
     for (int tries = 0; tries < 50; tries++) {
         int n = sendto(s.udp, f + 4, rtpLen, 0, (sockaddr *)&to, sizeof(to));
-        if (n == (int)rtpLen) return true;
+        if (n == (int)rtpLen) {
+            if (s.lte) {                                      // LTE: ära saada kaadrit ühe pursakuna
+                uint32_t d = LteRate::paceMs(rtpLen);
+                if (d) vTaskDelay(pdMS_TO_TICKS(d));
+            }
+            return true;
+        }
         if (errno != ENOMEM && errno != ENOBUFS && errno != EAGAIN) return false;
         vTaskDelay(pdMS_TO_TICKS(2));                         // lwIP puhvrid täis – oota
     }
@@ -180,6 +188,7 @@ static bool sendPkt(Session &s, uint8_t ch, uint16_t port, uint8_t *f, size_t rt
 }
 
 static bool sendRtp(Session &s, Track &t, uint8_t *f, size_t rtpLen) {
+    if (s.lte && &t == &s.a) LteRate::consume(rtpLen);   // heli: alati saata, aga arvesta eelarvest
     t.pkts++;
     t.octets += rtpLen - 12;
     return sendPkt(s, t.chRtp, t.cliRtp, f, rtpLen);
@@ -450,6 +459,16 @@ static bool handleRequest(Session &s, char *req) {
                      "Session: %08lX;timeout=%d\r\n",
                      a, b, (unsigned long)t.ssrc, (unsigned long)s.sessionId, RTSP_SESSION_TIMEOUT);
         } else {
+#if LTE_RTSP_TCP_ONLY
+            // LTE: RTP/UDP ajab modemi CMUX kanali kinni (testitud: 3/3 korda 13–30 s jooksul,
+            // ka 25 kB/s juures) ja CGNAT kaotab suure osa pakette. 461 → VLC, Synology,
+            // Milestone jt lähevad ise üle RTP/TCP-le (interleaved), mis töötab stabiilselt.
+            if (s.lte) {
+                LOGI(TAG, "LTE klient küsis UDP-d – vastan 461, klient läheb üle TCP-le");
+                reply(s, 461, "Unsupported Transport", cseq);
+                return true;
+            }
+#endif
             const char *cp = strstr(tr, "client_port=");
             int a = 0, b = 0;
             if (!cp || sscanf(cp, "client_port=%d-%d", &a, &b) < 1 || (s.udp < 0 && !openUdp(s))) {
@@ -566,7 +585,8 @@ static void clientTask(void *arg) {
 
     char ip[16];
     inet_ntoa_r(s->peer.sin_addr, ip, sizeof(ip));
-    LOGI(TAG, "Klient ühendus: %s (%d/%d)", ip, (int)s_clients, RTSP_MAX_CLIENTS);
+    s->lte = LteRate::isLteSocket(s->sock);
+    LOGI(TAG, "Klient ühendus: %s (%d/%d)%s", ip, (int)s_clients, RTSP_MAX_CLIENTS, s->lte ? " – LTE kaudu" : "");
 
     for (;;) {
         // 1) Sissetulevad päringud (mitteblokeeriv, kui voog käib)
@@ -592,7 +612,11 @@ static void clientTask(void *arg) {
         // 3) Uus kaader → saada
         if (s->playing && s->v.setup && Camera::waitFrame(fr, lastSeq, 0)) {
             lastSeq = fr.seq;
-            if (!sendJpeg(*s, fr)) { LOGW(TAG, "Saatmine ebaõnnestus – sulgen"); break; }
+            if (!s->lte || LteRate::allow(fr.len)) {           // LTE: kaader ainult eelarve piires
+                const uint32_t t0 = millis();
+                if (!sendJpeg(*s, fr)) { LOGW(TAG, "Saatmine ebaõnnestus – sulgen"); break; }
+                if (s->lte && s->tcp) LteRate::sent(fr.len, millis() - t0);
+            }
         }
 
         // 4) Heli (20 ms paketid)
@@ -914,6 +938,8 @@ static void pushTask(void *) {
                 if (connect(s->sock, res->ai_addr, res->ai_addrlen) != 0) {
                     snprintf(errBuf, sizeof(errBuf), "Ühendus serveriga ebaõnnestus (errno %d)", errno);
                     err = errBuf;
+                } else {
+                    s->lte = LteRate::isLteSocket(s->sock);
                 }
             }
             if (res) freeaddrinfo(res);
@@ -995,8 +1021,12 @@ static void pushTask(void *) {
                     }
                     if (Camera::waitFrame(fr, lastSeq, 0)) {
                         lastSeq = fr.seq;
-                        if (!sendJpeg(*s, fr)) { err = "Saatmine ebaõnnestus (võrk?)"; break; }
-                        frames++;
+                        if (!s->lte || LteRate::allow(fr.len)) {
+                            const uint32_t t0 = millis();
+                            if (!sendJpeg(*s, fr)) { err = "Saatmine ebaõnnestus (võrk?)"; break; }
+                            if (s->lte) LteRate::sent(fr.len, millis() - t0);
+                            frames++;
+                        }
                     }
                     if (s->a.setup && Audio::running() && !sendAudio(*s)) { err = "Heli saatmine ebaõnnestus"; break; }
                     uint32_t now = millis();

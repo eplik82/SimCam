@@ -111,6 +111,23 @@
 #define LTE_REBOOT_AFTER_MS    900000UL  // 15 min ilma ühenduseta → ESP restart
 #define LTE_AT_FAIL_LIMIT          4     // järjest vastamata signaalipäringut (×10 s) → taastamine
 
+// LTE vaatajate saatmiseelarve (vt lte_rate.h): kaadrisagedus kohandub LTE läbilaskega.
+// Modemi UART-il pole voojuhtimist – liiga kiire saatmine ajab CMUX kanali kinni.
+#define LTE_RATE_ENABLED           1
+#define LTE_RATE_DEBUG             0     // 1 = logi iga AT vastamisaja mõõtmine
+#define LTE_RATE_START_KBPS       25     // algeelarve, kui levi pole teada
+#define LTE_RATE_MIN_KBPS          6
+#define LTE_RATE_MAX_KBPS         45     // RSRP -110: 51 kB/s juures AT 68 ms ja peagi kinni
+#define LTE_RATE_STEP_KBPS         1     // tõus iga hea mõõtmise järel (kui eelarvest jääb puudu)
+#define LTE_RATE_BURST_S         1.5f    // kui palju võib korraga "ette" saata (sekundites)
+#define LTE_RATE_PROBE_MS       2000     // AT vastamisaja mõõtmine voo ajal
+#define LTE_RATE_RTT_WARN_MS      20     // vastamisaeg üle tühikäigu + see → eelarve −1 samm
+#define LTE_RATE_RTT_BAD_MS       45     // … + see → eelarve ×0,7
+#define LTE_RATE_HOLD_MS        8000     // pärast vähendamist ei tõsteta
+#define LTE_RATE_SLOW_SEND_MS   2500     // TCP kaadri saatmine kauem → eelarve ×0,7
+#define LTE_RTSP_TCP_ONLY          1     // LTE RTSP klientidele ainult RTP/TCP (UDP → 461)
+#define LTE_RATE_PACE_X          2.0f    // UDP paketid hajutatult: hetkekiirus ≤ eelarve × see
+
 // GPS (modemi GNSS, SIM7600: AT+CGPS / AT+CGPSINFO). Loetakse CMUX AT-kanali kaudu,
 // seega töötab ainult siis, kui LTE on seadetes sees ja modem toetab CMUX-i.
 #define GPS_ENABLED_DEFAULT       1
