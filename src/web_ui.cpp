@@ -219,7 +219,7 @@ static esp_err_t h_login_post(httpd_req_t *req) {
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     if (ok) {
-        static char cookie[128];
+        char cookie[128];                                // set_hdr hoiab viita kuni saatmiseni
         snprintf(cookie, sizeof(cookie), "simcam=%s; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax",
                  Auth::cookieValue().c_str());
         httpd_resp_set_hdr(req, "Set-Cookie", cookie);
@@ -250,7 +250,7 @@ static esp_err_t h_password(httpd_req_t *req) {
         return httpd_resp_sendstr(req, "{\"ok\":false}");
     }
     // Uus küpsis, et kasutaja jääks sisse logituks
-    static char cookie[128];
+    char cookie[128];
     snprintf(cookie, sizeof(cookie), "simcam=%s; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax",
              Auth::cookieValue().c_str());
     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
@@ -393,8 +393,11 @@ static esp_err_t h_status(httpd_req_t *req) {
     jsonEsc(staSsid, sizeof(staSsid), w.staSsid);
     jsonEsc(apSsid, sizeof(apSsid), w.apSsid);
 
-    static char buf[3600];                     // httpd käsitlejad jooksevad ühes taskis
-    int n = snprintf(buf, sizeof(buf),
+    // HTTP ja HTTPS server on eraldi taskid – jagatud static puhver poleks lõimekindel
+    const size_t BUFSZ = 3600;
+    char *buf = (char *)malloc(BUFSZ);
+    if (!buf) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "mälu");
+    int n = snprintf(buf, BUFSZ,
         "{\"wifi\":{\"sta_en\":%s,\"sta_ok\":%s,\"sta_ssid\":\"%s\",\"sta_ip\":\"%s\","
         "\"sta_rssi\":%d,\"ch\":%d,\"ap_en\":%s,\"ap_ssid\":\"%s\",\"ap_ip\":\"%s\",\"ap_clients\":%d,\"ap_temp\":%s},"
         "\"lte\":{\"enabled\":%s,\"state\":\"%s\",\"connected\":%s,\"ip\":\"%s\","
@@ -427,9 +430,12 @@ static esp_err_t h_status(httpd_req_t *req) {
         SIMCAM_VERSION, Log::resetReason(), (unsigned long)Log::warnings(), (unsigned long)Log::errors(),
         (batJson() + "," + micJson() + "," + pushJson() + "," + gpsJson() + "," + rateJson()).c_str());
 
+    if (n >= (int)BUFSZ) n = BUFSZ - 1;
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, buf, n);
+    esp_err_t r = httpd_resp_send(req, buf, n);
+    free(buf);
+    return r;
 }
 
 static esp_err_t h_focus(httpd_req_t *req) {
@@ -720,7 +726,7 @@ static esp_err_t h_config_post(httpd_req_t *req) {
         }
     }
     {   // RTSP push: URL (ilma kasutaja/paroolita), kasutaja, parool (tühi = muutmata)
-        static char pv[500];                   // httpd käsitlejad jooksevad ühes taskis
+        char pv[500];                          // pinul (HTTP ja HTTPS on eraldi taskid)
         if (formField(body, "push_en", v, sizeof(v))) d.pushEnabled = v[0] == '1';
         if (formField(body, "push_url", pv, sizeof(pv))) {
             char *s = pv; while (*s == ' ') s++;
@@ -1031,7 +1037,7 @@ bool begin() {
     cfg.max_uri_handlers = 40;
     cfg.max_open_sockets = 5;             // + HTTPS 3, RTSP, DNS … – lwIP-s kokku 16 soklit
     cfg.lru_purge_enable = true;          // vabasta vanimad, kui soketid otsas
-    cfg.stack_size       = 8192;
+    cfg.stack_size       = 12288;          // /api/status (GPS, LTE, modem) + autentimine – 8 KB jooksis üle
     cfg.core_id          = 1;
     cfg.recv_wait_timeout = 10;           // aeglane mobiilivõrk
     cfg.send_wait_timeout = 10;
@@ -1083,7 +1089,7 @@ bool begin() {
         sc.httpd = cfg;
         sc.httpd.ctrl_port = 32769;
         sc.httpd.max_open_sockets = HTTPS_MAX_SOCKETS;
-        sc.httpd.stack_size = 10240;                             // TLS käepigistus vajab rohkem pinu
+        sc.httpd.stack_size = 14336;                             // TLS käepigistus + samad käsitlejad
         sc.port_secure = HTTPS_PORT;
         sc.servercert = (const uint8_t *)HttpsCert::certPem();
         sc.servercert_len = strlen(HttpsCert::certPem()) + 1;
