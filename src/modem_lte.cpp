@@ -29,6 +29,8 @@ static volatile uint32_t s_ipLostAt = 0;
 static bool              s_serialOpen = false;
 static uint32_t          s_baud = MODEM_BAUD_DEFAULT;
 static bool              s_cmuxBroken = false;   // CMUX ebaõnnestus → edaspidi DATA
+static bool              s_modemLost = false;    // modem ei vastanud üldse (nt toitekatkestus) → kiire taastamine
+static uint32_t          s_pwrkeyAt = 0;         // PWRKEY saadeti juba tuvastamisel (modem käivitub PPP.end ajal)
 static HardwareSerial   &AT = Serial1;
 
 #define ST_LOCK()   xSemaphoreTake(s_mtx, portMAX_DELAY)
@@ -172,7 +174,9 @@ static void pwrkeyPulse(uint32_t ms) {
     digitalWrite(MODEM_PWRKEY_PIN, LOW);
 }
 
-static bool powerOnModem() {
+// fast = modem kadus töö ajal (toitekatkestus): ära raiska aega "+++"-le ja korduvatele
+// katsetele – CMUX sulgemine + üks kontroll, siis kohe PWRKEY.
+static bool powerOnModem(bool fast = false) {
     pinMode(MODEM_PWRKEY_PIN, OUTPUT);
     digitalWrite(MODEM_PWRKEY_PIN, LOW);
 
@@ -186,19 +190,41 @@ static bool powerOnModem() {
 
     // 1) Modem võib juba töötada (nt ainult ESP taaskäivitus) – siis
     //    PWRKEY-d EI vajutata, sest see võiks modemi hoopis välja lülitada.
-    if (modemResponds()) return true;
-    escapeDataMode();
-    if (modemResponds()) return true;
-    cmuxCloseDown();
-    if (modemResponds()) { LOGI(TAG, "Modem väljus CMUX režiimist"); return true; }
+    if (fast && s_pwrkeyAt) {
+        // PWRKEY saadeti juba kadumise tuvastamisel – modem käivitub (~18 s), oota seda
+        const uint32_t t0 = s_pwrkeyAt;
+        s_pwrkeyAt = 0;
+        while (millis() - t0 < 30000) {
+            if (modemResponds()) {
+                LOGI(TAG, "Modem käivitus %lu s-ga (PWRKEY tuvastamisel)", (unsigned long)((millis() - t0) / 1000));
+                return true;
+            }
+            delay(200);
+        }
+        LOGW(TAG, "Modem ei käivitunud 30 s jooksul – proovin uuesti");
+    }
+    if (fast) {
+        cmuxCloseDown();
+        if (modemResponds()) { LOGI(TAG, "Modem töötab (väljus CMUX režiimist)"); return true; }
+    } else {
+        if (modemResponds()) return true;
+        escapeDataMode();
+        if (modemResponds()) return true;
+        cmuxCloseDown();
+        if (modemResponds()) { LOGI(TAG, "Modem väljus CMUX režiimist"); return true; }
+    }
 
     // 2) Lülita sisse PWRKEY impulsiga (sama järjestus mis LilyGO näidetes)
     pwrkeyPulse(500);
     LOGI(TAG, "Ootan modemi käivitumist (kuni 30 s)...");
     uint32_t t0 = millis();
+    delay(8000);                          // SIM7600 ei vasta enne ~10 s – ära koorma UART-i
     while (millis() - t0 < 30000) {
-        if (modemResponds()) return true;
-        delay(1000);
+        if (modemResponds()) {
+            LOGI(TAG, "Modem käivitus %lu s-ga", (unsigned long)((millis() - t0) / 1000));
+            return true;
+        }
+        delay(200);
     }
     return false;
 }
@@ -726,6 +752,19 @@ static bool registered() {
     return st == 1 || st == 5 || st == -1;   // -1 = pole teada → ära karista
 }
 
+// Pärast ebaõnnestunud päringut: kas modem üldse vastab? 3 katset ~1,5 s vahega.
+// (ülekoormuse korral võib üksik päring aeguda – aga kolm järjest tähendab, et modem
+// on kadunud: toitekatkestus nt USB eemaldamisel või CMUX kanal kinni)
+static bool modemAlive() {
+    if (PPP.mode() != ESP_MODEM_MODE_CMUX) return true;
+    for (int i = 0; i < 3; i++) {
+        String r;
+        if (PPP.cmd("AT", r, 1200)) return true;
+        delay(300);
+    }
+    return false;
+}
+
 // =============================================================================
 //  Halduri task (olekumasin)
 // =============================================================================
@@ -742,7 +781,7 @@ static void lteTask(void *) {
         switch (state) {
 
         case State::PowerOn:
-            if (powerOnModem()) state = State::AtInit;
+            if (powerOnModem(s_modemLost)) { s_modemLost = false; state = State::AtInit; }
             else {
                 // Levinuim põhjus: USB-ainult mPCIe kaart (nt MikroTik R11e-LTE, Sierra MC7304),
                 // mis ei kasuta T-SIMCAM-i UART liine. Vt README "Modemi ühilduvus".
@@ -832,13 +871,20 @@ static void lteTask(void *) {
                 if (now - lastPoll >= LTE_MONITOR_PERIOD_MS) {
                     lastPoll = now;
                     atFails = pollModem() ? 0 : atFails + 1;
+                    if (atFails) atFails = modemAlive() ? 0 : LTE_AT_FAIL_LIMIT;   // kinnita kohe (~5 s)
                     if (!registered()) { if (!regLostAt) regLostAt = now; }
                     else regLostAt = 0;
                 }
                 // CMUX kanal kinni (nt pärast ülekoormust): PPP ei pruugi IP kadumisest
                 // teatada, seade oleks muidu igaveseks "CONNECTED", aga internetist kättesaamatu
                 if (atFails >= LTE_AT_FAIL_LIMIT) {
-                    setError("Modem ei vasta (CMUX kanal kinni) – taastan ühenduse");
+                    setError("Modem ei vasta (toitekatkestus või CMUX kanal kinni) – taastan ühenduse");
+                    s_modemLost = true;
+                    // Lülita modem kohe sisse: see käivitub (~18 s) samal ajal, kui PPP.end
+                    // ootab LCP lõpetamist (~12 s). SIM7600 lülitub välja alles ≥2,5 s
+                    // impulsiga – kui modem siiski töötab, ei tee 500 ms impulss midagi.
+                    pwrkeyPulse(500);
+                    s_pwrkeyAt = millis();
                     break;
                 }
                 if (PPP.mode() == ESP_MODEM_MODE_CMUX && LteRate::wantProbe()) {   // voo ajal: modemi järjekorra pikkus
@@ -846,7 +892,7 @@ static void lteTask(void *) {
                     const uint32_t t0 = millis();
                     const bool ok = PPP.cmd("AT", r, 1500);
                     LteRate::atSample(millis() - t0, ok);
-                    atFails = ok ? 0 : atFails + 1;            // voo ajal tuvastatakse kinnijäämine ~8 s-ga
+                    atFails = ok ? 0 : (modemAlive() ? 0 : LTE_AT_FAIL_LIMIT);   // voo ajal: kinnita kohe
                 }
                 servicePinChange();
                 if (!atFails) pollGps();
@@ -870,12 +916,20 @@ static void lteTask(void *) {
             s_gps.fix = false;
             ST_UNLOCK();
             LteRate::reset(0, 0);
-            PPP.end();
+            {
+                const uint32_t t0 = millis();
+                PPP.end();                       // lwIP ootab LCP lõpetamist ~12 s – modem käivitub samal ajal
+                LOGI(TAG, "PPP lõpetatud (%lu ms)", (unsigned long)(millis() - t0));
+            }
             s_hasIp = false;
             failedRecoveries++;
-            LOGW(TAG, "Taastamine #%lu, ootan %lu ms", (unsigned long)failedRecoveries, (unsigned long)backoff);
-            delay(backoff);
-            backoff = min<uint32_t>(backoff * 2, 60000);
+            if (s_modemLost && failedRecoveries == 1) {
+                LOGW(TAG, "Taastamine #1 – modem kadus, käivitan kohe uuesti");
+            } else {
+                LOGW(TAG, "Taastamine #%lu, ootan %lu ms", (unsigned long)failedRecoveries, (unsigned long)backoff);
+                delay(backoff);
+                backoff = min<uint32_t>(backoff * 2, 60000);
+            }
 
             // Korduvate ebaõnnestumiste korral modemi täielik taaskäivitus
             if (failedRecoveries >= 3 && powerOnModem()) {
